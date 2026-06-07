@@ -1,0 +1,224 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Ghibli-inspired palette */
+    --background: 40 45% 97%;
+    --foreground: 50 10% 10%;
+
+    --card: 40 50% 99%;
+    --card-foreground: 50 10% 10%;
+
+    --popover: 40 50% 99%;
+    --popover-foreground: 50 10% 10%;
+
+    /* Cherry blossom red */
+    --primary: 355 63% 42%;
+    --primary-foreground: 40 45% 97%;
+
+    /* Primary container - lighter cherry */
+    --primary-container: 355 55% 53%;
+
+    /* Mossy green */
+    --secondary: 113 33% 31%;
+    --secondary-foreground: 40 45% 97%;
+
+    /* Surface tiers */
+    --surface: 40 45% 97%;
+    --surface-container-low: 38 35% 94%;
+    --surface-container-lowest: 0 0% 100%;
+    --surface-container-high: 38 25% 90%;
+    --surface-variant: 38 20% 86%;
+
+    --muted: 38 35% 94%;
+    --muted-foreground: 50 8% 42%;
+
+    --accent: 113 33% 31%;
+    --accent-foreground: 40 45% 97%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 38 20% 86%;
+    --input: 38 20% 86%;
+    --ring: 355 63% 42%;
+
+    --radius: 0.5rem;
+
+    /* On-surface color (soft black) */
+    --on-surface: 50 10% 10%;
+
+    /* Outline variant for ghost borders */
+    --outline-variant: 38 15% 75%;
+
+    --sidebar-background: 40 45% 97%;
+    --sidebar-foreground: 50 10% 10%;
+    --sidebar-primary: 355 63% 42%;
+    --sidebar-primary-foreground: 40 45% 97%;
+    --sidebar-accent: 38 35% 94%;
+    --sidebar-accent-foreground: 50 10% 10%;
+    --sidebar-border: 38 20% 86%;
+    --sidebar-ring: 355 63% 42%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif;
+  }
+}
+
+@layer components {
+  .rich-text-content {
+    @apply font-body text-foreground;
+  }
+
+  .rich-text-content:empty::before {
+    content: attr(data-placeholder);
+    @apply pointer-events-none text-muted-foreground;
+  }
+
+  .rich-text-content :where(p) {
+    @apply mb-4;
+  }
+
+  .rich-text-content :where(h1) {
+    @apply mb-5 mt-8 font-serif text-display-sm leading-tight text-foreground;
+  }
+
+  .rich-text-content :where(h2) {
+    @apply mb-4 mt-7 font-serif text-headline-lg leading-tight text-foreground;
+  }
+
+  .rich-text-content :where(h3) {
+    @apply mb-3 mt-6 font-serif text-headline-md leading-snug text-foreground;
+  }
+
+  .rich-text-content :where(h4, h5, h6) {
+    @apply mb-3 mt-5 font-body text-lg font-bold text-foreground;
+  }
+
+  .rich-text-content :where(a) {
+    @apply font-semibold text-primary underline underline-offset-4;
+  }
+
+  .rich-text-content :where(blockquote) {
+    @apply my-5 border-l-4 border-primary/40 pl-4 italic text-muted-foreground;
+  }
+
+  .rich-text-content :where(ul) {
+    @apply my-4 list-disc pl-6;
+  }
+
+  .rich-text-content :where(ol) {
+    @apply my-4 list-decimal pl-6;
+  }
+
+  .rich-text-content :where(li) {
+    @apply mb-2 pl-1;
+  }
+
+  .rich-text-content :where(img) {
+    @apply my-6 max-w-full rounded-md border border-border;
+  }
+
+  .rich-text-content :where(hr) {
+    @apply my-6 border-border;
+  }
+
+  .rich-text-content :where(table) {
+    @apply my-6 w-full border-collapse overflow-hidden rounded-md text-sm;
+  }
+
+  .rich-text-content :where(th, td) {
+    @apply border border-border px-3 py-2 align-top;
+  }
+
+  .rich-text-content :where(th) {
+    @apply bg-surface-low font-bold;
+  }
+
+  .rich-text-content :where(pre) {
+    @apply my-5 overflow-x-auto rounded-md bg-surface-low p-4 font-mono text-sm;
+  }
+
+  .rich-text-content :where(code) {
+    @apply rounded bg-surface-low px-1 py-0.5 font-mono text-sm;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Glassmorphism utility */
+  .glass {
+    backdrop-filter: blur(20px);
+    background: hsl(var(--surface) / 0.7);
+  }
+
+  .glass-dark {
+    backdrop-filter: blur(20px);
+    background: hsl(var(--on-surface) / 0.6);
+  }
+
+  /* Ambient shadow - tinted, not pure black */
+  .shadow-ambient {
+    box-shadow: 0 8px 40px hsl(var(--on-surface) / 0.04);
+  }
+
+  .shadow-ambient-lg {
+    box-shadow: 0 16px 60px hsl(var(--on-surface) / 0.06);
+  }
+
+  /* Gradient primary for CTAs */
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-container)));
+  }
+
+  /* Surface backgrounds */
+  .bg-surface {
+    background-color: hsl(var(--surface));
+  }
+
+  .bg-surface-low {
+    background-color: hsl(var(--surface-container-low));
+  }
+
+  .bg-surface-lowest {
+    background-color: hsl(var(--surface-container-lowest));
+  }
+
+  .bg-surface-high {
+    background-color: hsl(var(--surface-container-high));
+  }
+
+  /* Editorial letter spacing */
+  .tracking-editorial {
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  /* Floral divider */
+  .floral-divider::after {
+    content: '✿';
+    display: block;
+    text-align: center;
+    color: hsl(var(--primary) / 0.3);
+    font-size: 1.5rem;
+    margin: 2rem 0;
+  }
+}

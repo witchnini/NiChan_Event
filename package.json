@@ -1,0 +1,25 @@
+{
+  "name": "nichan",
+  "private": true,
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "NiChan-event",
+    "NiChan-backend"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:event": "turbo run dev --filter=nichan-event",
+    "dev:backend": "turbo run dev --filter=nichan-backend",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "check": "turbo run check",
+    "prisma:generate": "turbo run prisma:generate",
+    "prisma:migrate": "turbo run prisma:migrate",
+    "prisma:studio": "turbo run prisma:studio",
+    "db:seed": "turbo run db:seed"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  }
+}
