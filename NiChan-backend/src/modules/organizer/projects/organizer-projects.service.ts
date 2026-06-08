@@ -70,6 +70,77 @@ export const getOrganizerProjectById = async (projectId: string, organizerUserId
   return project;
 };
 
+// ─── Contracts (organizer view) ─────────────────────────────────────────────────
+
+export const getOrganizerProjectContracts = async (
+  projectId: string,
+  organizerUserId: string,
+) => {
+  const event = await prisma.event.findFirst({
+    where: { id: projectId, organizerUserId },
+    select: { id: true },
+  });
+  if (!event) throw createError("NOT_FOUND", "Project not found", 404);
+
+  return prisma.contract.findMany({
+    where: { eventId: projectId },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          eventDate: true,
+          locationText: true,
+          customerUser: { select: { id: true, displayName: true } },
+          consultationRequest: {
+            select: { id: true, customerName: true, eventType: true, note: true },
+          },
+        },
+      },
+      customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
+      createdBy: { select: { id: true, displayName: true } },
+      versions: { take: 1, orderBy: { createdAt: "desc" } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+};
+
+export const getOrganizerContractById = async (
+  contractId: string,
+  organizerUserId: string,
+  role?: string,
+) => {
+  const contract = await prisma.contract.findFirst({
+    where: {
+      id: contractId,
+      ...(role === "admin" ? {} : { event: { organizerUserId } }),
+    },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          eventDate: true,
+          locationText: true,
+          customerUser: { select: { id: true, displayName: true } },
+          consultationRequest: {
+            select: { id: true, customerName: true, eventType: true, note: true },
+          },
+        },
+      },
+      customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
+      createdBy: { select: { id: true, displayName: true } },
+      versions: { take: 1, orderBy: { createdAt: "desc" } },
+      documents: true,
+    },
+  });
+
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  return contract;
+};
+
 // ─── Kanban ───────────────────────────────────────────────────────────────────
 
 const KANBAN_COLUMNS = [

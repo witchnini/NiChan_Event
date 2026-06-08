@@ -323,6 +323,34 @@ export const getCustomerContracts = async (customerUserId: string) => {
   });
 };
 
+export const getCustomerContractById = async (contractId: string, customerUserId: string) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          eventDate: true,
+          locationText: true,
+          customerUser: { select: { id: true, displayName: true } },
+          consultationRequest: {
+            select: { id: true, customerName: true, eventType: true, note: true },
+          },
+        },
+      },
+      customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
+      createdBy: { select: { id: true, displayName: true } },
+      versions: { take: 1, orderBy: { createdAt: "desc" } },
+    },
+  });
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  if (contract.customerUserId !== customerUserId)
+    throw createError("FORBIDDEN", "You do not have access to this contract", 403);
+  return contract;
+};
+
 export const getCustomerTransactions = async (customerUserId: string) => {
   return prisma.transaction.findMany({
     where: { event: { customerUserId } },

@@ -6,6 +6,7 @@ import {
   CheckCircle,
   ChevronRight,
   Edit2,
+  Eye,
   ListChecks,
   Milestone,
   PlayCircle,
@@ -16,6 +17,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +33,8 @@ import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { eventStatusLabels, eventStatusColors, eventStatusFilters, getEventStatusLabel } from "@/lib/eventDisplay";
+import ContractPdfButton from "@/components/ContractPdfButton";
+import { type FullContract } from "@/components/ContractDocument";
 
 type Project = {
   id: string;
@@ -296,9 +300,11 @@ const getProjectCustomerName = (project: Pick<Project, "customerUser" | "consult
 
 const OrganizerProjects = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [projectStaff, setProjectStaff] = useState<ProjectStaffAssignment[]>([]);
+  const [projectContracts, setProjectContracts] = useState<FullContract[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [kanban, setKanban] = useState<KanbanResponse | null>(null);
@@ -451,19 +457,22 @@ const OrganizerProjects = () => {
       setProjectDetail(null);
       setKanban(null);
       setProjectStaff([]);
+      setProjectContracts([]);
       return;
     }
 
     setContextLoading(true);
     try {
-      const [detailData, kanbanData, staffData] = await Promise.all([
+      const [detailData, kanbanData, staffData, contractsData] = await Promise.all([
         apiClient.get<ProjectDetail>(`/organizer/projects/${projectId}`),
         apiClient.get<KanbanResponse>(`/organizer/projects/${projectId}/kanban`),
         apiClient.get<ProjectStaffResponse>(`/organizer/staff/events/${projectId}`),
+        apiClient.get<FullContract[]>(`/organizer/projects/${projectId}/contracts`),
       ]);
       setProjectDetail(detailData);
       setKanban(kanbanData);
       setProjectStaff(staffData.assignments);
+      setProjectContracts(contractsData);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Không tải được dự án");
     } finally {
@@ -879,6 +888,35 @@ const OrganizerProjects = () => {
                   ))}
                   {projectDetail.milestones.length === 0 && (
                     <p className="font-body text-sm text-muted-foreground">Chưa có mốc triển khai.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="2xl:col-span-2 bg-surface-lowest rounded-xl p-5 shadow-ambient">
+                <h3 className="font-serif text-headline-md text-foreground mb-4">Hợp đồng</h3>
+                <div className="space-y-3">
+                  {projectContracts.map((contract) => (
+                    <div key={contract.contractCode} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border p-4">
+                      <div>
+                        <p className="font-body text-sm font-semibold text-foreground">
+                          {contract.contractCode}
+                          <span className="text-muted-foreground font-normal"> · Phiên bản {contract.currentVersion}</span>
+                        </p>
+                        <p className="font-body text-xs text-muted-foreground mt-1">
+                          Giá trị: {Number(contract.totalValue || 0).toLocaleString("vi-VN")} ₫
+                          {contract.sentAt ? ` · Đã gửi ${new Date(contract.sentAt).toLocaleDateString("vi-VN")}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => navigate(`/ban-to-chuc/hop-dong/${contract.id}`)}>
+                          <Eye size={14} className="mr-1" /> Xem
+                        </Button>
+                        <ContractPdfButton contract={contract} detailPath={`/organizer/contracts/${contract.id}`} variant="outline" label="Tải PDF" />
+                      </div>
+                    </div>
+                  ))}
+                  {projectContracts.length === 0 && (
+                    <p className="font-body text-sm text-muted-foreground">Chưa có hợp đồng cho dự án này.</p>
                   )}
                 </div>
               </div>

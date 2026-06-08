@@ -7,6 +7,7 @@ import { sendSuccess } from "../../../utils/response";
 import {
   createOrganizerDocument,
   deleteChatMessage,
+  deleteOrganizerDocument,
   getChatMessages,
   getOrganizerEventDocuments,
   sendChatMessage,
@@ -77,5 +78,18 @@ organizerCommunicationRouter.post(
       fileUrl,
     });
     sendSuccess(res, { data, status: 201 });
+  },
+);
+
+// DELETE /api/organizer/events/:eventId/documents/:documentId
+organizerCommunicationRouter.delete(
+  "/events/:eventId/documents/:documentId",
+  async (req: Request, res: Response) => {
+    const data = await deleteOrganizerDocument(
+      p(req, "eventId"),
+      p(req, "documentId"),
+      req.user!.userId,
+    );
+    sendSuccess(res, { data });
   },
 );

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Plus, Edit2, CheckCircle2, XCircle, MoreHorizontal } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Plus, Edit2, CheckCircle2, XCircle, MoreHorizontal, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,23 +38,23 @@ type Transaction = {
 type Project = { id: string; name: string };
 
 const moneyShort = (value: number) => {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} ty`;
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} tỷ`;
   if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}tr`;
-  return `${Math.round(value).toLocaleString("vi-VN")}d`;
+  return `${Math.round(value).toLocaleString("vi-VN")}đ`;
 };
 
-const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + " d";
+const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + " đ";
 
 const txStatusList = [
-  { label: "Cho xu ly", value: "pending" },
-  { label: "Hoan thanh", value: "completed" },
-  { label: "Da huy", value: "cancelled" },
+  { label: "Chờ xử lý", value: "pending" },
+  { label: "Hoàn thành", value: "completed" },
+  { label: "Đã hủy", value: "cancelled" },
 ];
 
 const txStatusLabel: Record<string, string> = {
-  pending: "Cho xu ly",
-  completed: "Hoan thanh",
-  cancelled: "Da huy",
+  pending: "Chờ xử lý",
+  completed: "Hoàn thành",
+  cancelled: "Đã hủy",
 };
 
 const txStatusColors: Record<string, string> = {
@@ -83,7 +83,6 @@ const AdminFinance = () => {
   const [projectFinance, setProjectFinance] = useState<ProjectFinance[]>([]);
   const [monthlyPL, setMonthlyPL] = useState<MonthlyPL[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(true);
 
   // Transactions
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -96,7 +95,6 @@ const AdminFinance = () => {
   const [saving, setSaving] = useState(false);
 
   const loadDashboard = async () => {
-    setLoading(true);
     try {
       const [projectsData, pl, expenseItems] = await Promise.all([
         apiClient.get<ProjectFinance[]>("/admin/finance/project-summary"),
@@ -107,9 +105,7 @@ const AdminFinance = () => {
       setMonthlyPL(pl.map(item => ({ ...item, expenses: item.expenses ?? 0 })));
       setExpenses(expenseItems);
     } catch (error) {
-      toast.error("Khong tai duoc du lieu tai chinh");
-    } finally {
-      setLoading(false);
+      toast.error("Không tải được dữ liệu tài chính");
     }
   };
 
@@ -122,7 +118,7 @@ const AdminFinance = () => {
       });
       setTransactions(data);
     } catch (error) {
-      toast.error("Khong tai duoc danh sach giao dich");
+      toast.error("Không tải được danh sách giao dịch");
     } finally {
       setTxLoading(false);
     }
@@ -142,7 +138,7 @@ const AdminFinance = () => {
       const data = await apiClient.get<Project[]>("/admin/projects", { pageSize: 100 });
       setProjects(data);
     } catch (error) {
-      toast.error("Khong tai duoc danh sach du an");
+      toast.error("Không tải được danh sách dự án");
     }
   };
 
@@ -187,16 +183,16 @@ const AdminFinance = () => {
 
   const validateForm = () => {
     if (!form.description.trim()) {
-      toast.error("Vui long nhap mo ta giao dich");
+      toast.error("Vui lòng nhập mô tả giao dịch");
       return false;
     }
     const amount = Number(form.amount);
     if (!amount || amount <= 0) {
-      toast.error("So tien phai lon hon 0");
+      toast.error("Số tiền phải lớn hơn 0");
       return false;
     }
     if (!form.transactionDate) {
-      toast.error("Vui long chon ngay giao dich");
+      toast.error("Vui lòng chọn ngày giao dịch");
       return false;
     }
     return true;
@@ -216,12 +212,12 @@ const AdminFinance = () => {
     setSaving(true);
     try {
       await apiClient.post("/admin/transactions", buildPayload());
-      toast.success("Da tao giao dich");
+      toast.success("Đã tạo giao dịch");
       setCreateOpen(false);
       setForm(emptyTxForm);
       await Promise.all([loadTransactions(), loadDashboard()]);
     } catch (error) {
-      toast.error("Tao giao dich that bai");
+      toast.error("Tạo giao dịch thất bại");
     } finally {
       setSaving(false);
     }
@@ -232,11 +228,11 @@ const AdminFinance = () => {
     setSaving(true);
     try {
       await apiClient.put(`/admin/transactions/${editItem.id}`, buildPayload());
-      toast.success("Da cap nhat giao dich");
+      toast.success("Đã cập nhật giao dịch");
       setEditItem(null);
       await Promise.all([loadTransactions(), loadDashboard()]);
     } catch (error) {
-      toast.error("Cap nhat giao dich that bai");
+      toast.error("Cập nhật giao dịch thất bại");
     } finally {
       setSaving(false);
     }
@@ -245,21 +241,32 @@ const AdminFinance = () => {
   const handleStatusChange = async (tx: Transaction, status: string) => {
     try {
       await apiClient.put(`/admin/transactions/${tx.id}`, { status });
-      toast.success(`Da chuyen sang "${txStatusLabel[status] ?? status}"`);
+      toast.success(`Đã chuyển sang "${txStatusLabel[status] ?? status}"`);
       await Promise.all([loadTransactions(), loadDashboard()]);
     } catch (error) {
-      toast.error("Cap nhat trang thai that bai");
+      toast.error("Cập nhật trạng thái thất bại");
+    }
+  };
+
+  const handleDelete = async (tx: Transaction) => {
+    if (!window.confirm(`Xóa giao dịch "${tx.description}"? Hành động này không thể hoàn tác.`)) return;
+    try {
+      await apiClient.del(`/admin/transactions/${tx.id}`);
+      toast.success("Đã xóa giao dịch");
+      await Promise.all([loadTransactions(), loadDashboard()]);
+    } catch (error) {
+      toast.error("Xóa giao dịch thất bại");
     }
   };
 
   const renderTxForm = () => (
     <div className="space-y-4">
       <div>
-        <label className="font-body text-sm text-foreground mb-1 block">Du an / Su kien</label>
+        <label className="font-body text-sm text-foreground mb-1 block">Dự án / Sự kiện</label>
         <Select value={form.eventId || "none"} onValueChange={v => setForm(p => ({ ...p, eventId: v === "none" ? "" : v }))}>
-          <SelectTrigger className="rounded-xl"><SelectValue placeholder="Khong gan du an" /></SelectTrigger>
+          <SelectTrigger className="rounded-xl"><SelectValue placeholder="Không gắn dự án" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">Khong gan du an</SelectItem>
+            <SelectItem value="none">Không gắn dự án</SelectItem>
             {projects.map(p => (
               <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
             ))}
@@ -268,28 +275,28 @@ const AdminFinance = () => {
       </div>
 
       <div>
-        <label className="font-body text-sm text-foreground mb-1 block">Mo ta *</label>
-        <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="VD: Tam ung dot 1" className="rounded-xl bg-surface-lowest font-body border-none" />
+        <label className="font-body text-sm text-foreground mb-1 block">Mô tả *</label>
+        <Input value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} placeholder="VD: Tạm ứng đợt 1" className="rounded-xl bg-surface-lowest font-body border-none" />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="font-body text-sm text-foreground mb-1 block">So tien (VND) *</label>
+          <label className="font-body text-sm text-foreground mb-1 block">Số tiền (VNĐ) *</label>
           <Input type="number" min={0} value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} className="rounded-xl bg-surface-lowest font-body border-none" />
         </div>
         <div>
-          <label className="font-body text-sm text-foreground mb-1 block">Ngay giao dich *</label>
+          <label className="font-body text-sm text-foreground mb-1 block">Ngày giao dịch *</label>
           <Input type="datetime-local" value={form.transactionDate} onChange={e => setForm(p => ({ ...p, transactionDate: e.target.value }))} className="rounded-xl bg-surface-lowest font-body border-none" />
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="font-body text-sm text-foreground mb-1 block">Hinh thuc thanh toan</label>
-          <Input value={form.paymentMethod} onChange={e => setForm(p => ({ ...p, paymentMethod: e.target.value }))} placeholder="Chuyen khoan / Tien mat" className="rounded-xl bg-surface-lowest font-body border-none" />
+          <label className="font-body text-sm text-foreground mb-1 block">Hình thức thanh toán</label>
+          <Input value={form.paymentMethod} onChange={e => setForm(p => ({ ...p, paymentMethod: e.target.value }))} placeholder="Chuyển khoản / Tiền mặt" className="rounded-xl bg-surface-lowest font-body border-none" />
         </div>
         <div>
-          <label className="font-body text-sm text-foreground mb-1 block">Trang thai</label>
+          <label className="font-body text-sm text-foreground mb-1 block">Trạng thái</label>
           <Select value={form.status} onValueChange={v => setForm(p => ({ ...p, status: v }))}>
             <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -306,16 +313,15 @@ const AdminFinance = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-serif text-headline-lg text-foreground">Quan ly tai chinh</h1>
-        <p className="font-body text-sm text-muted-foreground">{loading ? "Dang tai du lieu tu backend..." : "Du lieu lay tu PostgreSQL qua API"}</p>
+        <h1 className="font-serif text-headline-lg text-foreground">Quản lý tài chính</h1>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Tong doanh thu", value: moneyShort(totals.revenue), icon: DollarSign, up: true },
-          { label: "Tong chi phi", value: moneyShort(totals.expense), icon: TrendingDown, up: false },
-          { label: "Loi nhuan rong", value: moneyShort(totals.profit), icon: TrendingUp, up: totals.profit >= 0 },
-          { label: "Cong no phai thu", value: moneyShort(totals.receivable), icon: AlertCircle, up: false },
+          { label: "Tổng doanh thu", value: moneyShort(totals.revenue), icon: DollarSign, up: true },
+          { label: "Tổng chi phí", value: moneyShort(totals.expense), icon: TrendingDown, up: false },
+          { label: "Lợi nhuận ròng", value: moneyShort(totals.profit), icon: TrendingUp, up: totals.profit >= 0 },
+          { label: "Công nợ phải thu", value: moneyShort(totals.receivable), icon: AlertCircle, up: false },
         ].map((stat, i) => (
           <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
             <stat.icon size={20} className={stat.up ? "text-secondary" : "text-primary"} />
@@ -327,7 +333,7 @@ const AdminFinance = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
-          <h3 className="font-serif text-headline-md text-foreground mb-6">Doanh thu vs Chi phi</h3>
+          <h3 className="font-serif text-headline-md text-foreground mb-6">Doanh thu vs Chi phí</h3>
           <ResponsiveContainer width="100%" height={250}>
             <LineChart data={monthlyPL}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(38 20% 86%)" />
@@ -335,15 +341,15 @@ const AdminFinance = () => {
               <YAxis tick={{ fontSize: 12, fill: "hsl(50 8% 42%)" }} tickFormatter={moneyShort} />
               <Tooltip formatter={(value: number) => money(value)} />
               <Line type="monotone" dataKey="revenue" stroke="hsl(113 33% 31%)" strokeWidth={2} name="Doanh thu" />
-              <Line type="monotone" dataKey="expenses" stroke="hsl(355 63% 42%)" strokeWidth={2} name="Chi phi" />
+              <Line type="monotone" dataKey="expenses" stroke="hsl(355 63% 42%)" strokeWidth={2} name="Chi phí" />
             </LineChart>
           </ResponsiveContainer>
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
-          <h3 className="font-serif text-headline-md text-foreground mb-6">Co cau chi phi</h3>
+          <h3 className="font-serif text-headline-md text-foreground mb-6">Cơ cấu chi phí</h3>
           <div className="space-y-4">
-            {expenseBreakdown.length === 0 && <p className="font-body text-sm text-muted-foreground">Chua co chi phi committed/paid.</p>}
+            {expenseBreakdown.length === 0 && <p className="font-body text-sm text-muted-foreground">Chưa có chi phí committed/paid.</p>}
             {expenseBreakdown.map((exp) => (
               <div key={exp.category}>
                 <div className="flex items-center justify-between mb-1.5 font-body text-sm">
@@ -360,17 +366,17 @@ const AdminFinance = () => {
       </div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
-        <h3 className="font-serif text-headline-md text-foreground mb-6">Tai chinh theo du an</h3>
+        <h3 className="font-serif text-headline-md text-foreground mb-6">Tài chính theo dự án</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm font-body">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-3 text-muted-foreground font-semibold">Du an</th>
-                <th className="text-right py-3 text-muted-foreground font-semibold">Du toan</th>
-                <th className="text-right py-3 text-muted-foreground font-semibold">Da chi</th>
-                <th className="text-right py-3 text-muted-foreground font-semibold">Thu duoc</th>
-                <th className="text-right py-3 text-muted-foreground font-semibold">Loi nhuan</th>
-                <th className="text-right py-3 text-muted-foreground font-semibold">Trang thai</th>
+                <th className="text-left py-3 text-muted-foreground font-semibold">Dự án</th>
+                <th className="text-right py-3 text-muted-foreground font-semibold">Dự toán</th>
+                <th className="text-right py-3 text-muted-foreground font-semibold">Đã chi</th>
+                <th className="text-right py-3 text-muted-foreground font-semibold">Thu được</th>
+                <th className="text-right py-3 text-muted-foreground font-semibold">Lợi nhuận</th>
+                <th className="text-right py-3 text-muted-foreground font-semibold">Trạng thái</th>
               </tr>
             </thead>
             <tbody>
@@ -396,14 +402,14 @@ const AdminFinance = () => {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
-            <h3 className="font-serif text-headline-md text-foreground">Giao dich</h3>
-            <p className="font-body text-sm text-muted-foreground">{txLoading ? "Dang tai..." : `${transactions.length} giao dich`}</p>
+            <h3 className="font-serif text-headline-md text-foreground">Giao dịch</h3>
+            <p className="font-body text-sm text-muted-foreground">{txLoading ? "Đang tải..." : `${transactions.length} giao dịch`}</p>
           </div>
-          <Button variant="hero" size="sm" onClick={openCreate}><Plus size={16} /> Tao giao dich</Button>
+          <Button variant="hero" size="sm" onClick={openCreate}><Plus size={16} /> Tạo giao dịch</Button>
         </div>
 
         <div className="flex gap-2 flex-wrap mb-4">
-          {[{ label: "Tat ca", value: "all" }, ...txStatusList].map(status => (
+          {[{ label: "Tất cả", value: "all" }, ...txStatusList].map(status => (
             <button key={status.value} onClick={() => setTxFilter(status.value)}
               className={`px-3 py-2 rounded-xl font-body text-sm transition-all ${txFilter === status.value ? "gradient-primary text-primary-foreground" : "bg-surface-low text-muted-foreground hover:text-foreground"}`}
             >{status.label}</button>
@@ -413,19 +419,19 @@ const AdminFinance = () => {
         <Table>
           <TableHeader>
             <TableRow className="bg-surface-low">
-              <TableHead>Mo ta</TableHead>
-              <TableHead>Du an</TableHead>
-              <TableHead>Ngay</TableHead>
-              <TableHead>Hinh thuc</TableHead>
-              <TableHead className="text-right">So tien</TableHead>
-              <TableHead>Trang thai</TableHead>
+              <TableHead>Mô tả</TableHead>
+              <TableHead>Dự án</TableHead>
+              <TableHead>Ngày</TableHead>
+              <TableHead>Hình thức</TableHead>
+              <TableHead className="text-right">Số tiền</TableHead>
+              <TableHead>Trạng thái</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {!txLoading && transactions.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center font-body text-sm text-muted-foreground py-10">Chua co giao dich nao</TableCell>
+                <TableCell colSpan={7} className="text-center font-body text-sm text-muted-foreground py-10">Chưa có giao dịch nào</TableCell>
               </TableRow>
             )}
             {transactions.map(tx => (
@@ -438,22 +444,24 @@ const AdminFinance = () => {
                 <TableCell><span className={`px-3 py-1 rounded-full text-xs font-body font-semibold ${txStatusColors[tx.status] ?? "bg-muted text-muted-foreground"}`}>{txStatusLabel[tx.status] ?? tx.status}</span></TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tx)} title="Chinh sua"><Edit2 size={14} /></Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(tx)} title="Chỉnh sửa"><Edit2 size={14} /></Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal size={14} /></Button></DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {tx.status !== "completed" && (
-                          <DropdownMenuItem onClick={() => handleStatusChange(tx, "completed")}><CheckCircle2 size={12} className="mr-2" /> Danh dau hoan thanh</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleStatusChange(tx, "completed")}><CheckCircle2 size={12} className="mr-2" /> Đánh dấu hoàn thành</DropdownMenuItem>
                         )}
                         {tx.status !== "cancelled" && (
-                          <DropdownMenuItem onClick={() => handleStatusChange(tx, "cancelled")} className="text-destructive"><XCircle size={12} className="mr-2" /> Huy giao dich</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleStatusChange(tx, "cancelled")} className="text-destructive"><XCircle size={12} className="mr-2" /> Hủy giao dịch</DropdownMenuItem>
                         )}
                         {tx.status !== "pending" && (
                           <>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem onClick={() => handleStatusChange(tx, "pending")}>Dat lai cho xu ly</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleStatusChange(tx, "pending")}>Đặt lại chờ xử lý</DropdownMenuItem>
                           </>
                         )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleDelete(tx)} className="text-destructive"><Trash2 size={12} className="mr-2" /> Xóa giao dịch</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -467,11 +475,11 @@ const AdminFinance = () => {
       {/* Create */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-serif">Tao giao dich moi</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-serif">Tạo giao dịch mới</DialogTitle></DialogHeader>
           {renderTxForm()}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Huy</Button>
-            <Button variant="hero" onClick={handleCreate} disabled={saving}>{saving ? "Dang luu..." : "Tao"}</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Hủy</Button>
+            <Button variant="hero" onClick={handleCreate} disabled={saving}>{saving ? "Đang lưu..." : "Tạo"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -479,11 +487,11 @@ const AdminFinance = () => {
       {/* Edit */}
       <Dialog open={!!editItem} onOpenChange={() => setEditItem(null)}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-serif">Chinh sua giao dich</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="font-serif">Chỉnh sửa giao dịch</DialogTitle></DialogHeader>
           {renderTxForm()}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditItem(null)}>Huy</Button>
-            <Button variant="hero" onClick={handleEdit} disabled={saving}>{saving ? "Dang luu..." : "Luu"}</Button>
+            <Button variant="outline" onClick={() => setEditItem(null)}>Hủy</Button>
+            <Button variant="hero" onClick={handleEdit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

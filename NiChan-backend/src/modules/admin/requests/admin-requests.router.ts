@@ -59,6 +59,6 @@ adminRequestsRouter.patch(
 
 // DELETE /api/admin/requests/:id
 adminRequestsRouter.delete("/:id", async (req: Request, res: Response) => {
-  await deleteRequest(p(req, "id"));
-  sendSuccess(res, { data: { deleted: true } });
+  const data = await deleteRequest(p(req, "id"));
+  sendSuccess(res, { data });
 });

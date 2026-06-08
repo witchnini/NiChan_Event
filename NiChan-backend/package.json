@@ -12,7 +12,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "db:backfill-contract-documents": "tsx prisma/backfill-contract-documents.ts"
   },
   "engines": {
     "node": ">=22.0.0"

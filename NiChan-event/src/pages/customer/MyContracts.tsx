@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { FileText, Download, Eye, CheckCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FileText, Eye, CheckCircle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import SectionHeading from "@/components/SectionHeading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
@@ -29,8 +29,8 @@ type Contract = {
 const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + "đ";
 
 const MyContracts = () => {
+  const navigate = useNavigate();
   const [contracts, setContracts] = useState<Contract[]>([]);
-  const [viewItem, setViewItem] = useState<Contract | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -47,15 +47,13 @@ const MyContracts = () => {
     void load();
   }, []);
 
-  const handleDownload = (contract: Contract) => {
-    toast.success(`Đang tải hợp đồng ${contract.contractCode}...`);
-  };
+  const openContract = (contract: Contract) => navigate(`/dashboard/hop-dong/${contract.id}`);
 
   return (
     <div className="min-h-screen pt-24 pb-16">
       <section className="py-12 bg-surface-low">
         <div className="container mx-auto px-6">
-          <SectionHeading label="Hợp đồng" title="Hợp đồng của tôi" subtitle="Xem các hợp đồng dịch vụ đã được lưu trong hệ thống." />
+          <SectionHeading label="Hợp đồng" title="Hợp đồng của tôi" subtitle="Xem và tải các hợp đồng dịch vụ đã được lưu trong hệ thống." />
         </div>
       </section>
 
@@ -80,8 +78,8 @@ const MyContracts = () => {
                     <span className="inline-flex items-center gap-1 text-xs font-body font-semibold text-secondary"><CheckCircle size={12} /> {getContractStatusLabel(contract.status)}</span>
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="ghost" size="icon" onClick={() => setViewItem(contract)}><Eye size={18} /></Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDownload(contract)}><Download size={18} /></Button>
+                    <Button variant="outline" size="sm" onClick={() => openContract(contract)}><Eye size={16} className="mr-1" /> Xem</Button>
+                    <Button variant="hero" size="sm" onClick={() => openContract(contract)}><Download size={16} className="mr-1" /> Tải PDF</Button>
                   </div>
                 </div>
               </div>
@@ -89,36 +87,6 @@ const MyContracts = () => {
           ))}
         </div>
       </section>
-
-      <Dialog open={!!viewItem} onOpenChange={() => setViewItem(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle className="font-serif">Hợp đồng {viewItem?.contractCode}</DialogTitle></DialogHeader>
-          {viewItem && (
-            <div className="space-y-4 font-body text-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-surface-low flex items-center justify-center"><FileText size={22} className="text-primary" /></div>
-                <div>
-                  <p className="font-semibold text-foreground text-base">{viewItem.event ? getEventDisplayName(viewItem.event) : "Hợp đồng"}</p>
-                  <p className="text-muted-foreground">Phiên bản {viewItem.currentVersion}</p>
-                </div>
-              </div>
-              <div className="bg-surface-low rounded-xl p-4 space-y-3">
-                <div><p className="text-muted-foreground font-semibold">Phạm vi</p><p className="text-foreground">{viewItem.versions?.[0]?.scopeText ?? "-"}</p></div>
-                <div><p className="text-muted-foreground font-semibold">Thanh toán</p><p className="text-foreground">{viewItem.versions?.[0]?.paymentTerms ?? "-"}</p></div>
-                <div><p className="text-muted-foreground font-semibold">Điều khoản</p><p className="text-foreground">{viewItem.versions?.[0]?.generalTerms ?? "-"}</p></div>
-              </div>
-              <div className="flex items-center justify-between">
-                <p className="font-serif font-bold text-lg text-foreground">{money(viewItem.totalValue)}</p>
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-secondary/10 text-secondary">{getContractStatusLabel(viewItem.status)}</span>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewItem(null)}>Đóng</Button>
-            <Button variant="hero" onClick={() => { if (viewItem) handleDownload(viewItem); }}><Download size={14} className="mr-1" /> Tải PDF</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

@@ -13,7 +13,9 @@ import {
   createTask,
   deleteTask,
   getKanban,
+  getOrganizerContractById,
   getOrganizerProjectById,
+  getOrganizerProjectContracts,
   getTask,
   listOrganizerProjects,
   updateProjectStatus,
@@ -33,6 +35,22 @@ organizerProjectsRouter.get("/projects", async (req: Request, res: Response) => 
 // GET /api/organizer/projects/:projectId/kanban
 organizerProjectsRouter.get("/projects/:projectId/kanban", async (req: Request, res: Response) => {
   const data = await getKanban(p(req, "projectId"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/organizer/projects/:projectId/contracts
+organizerProjectsRouter.get("/projects/:projectId/contracts", async (req: Request, res: Response) => {
+  const data = await getOrganizerProjectContracts(p(req, "projectId"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/organizer/contracts/:contractId
+organizerProjectsRouter.get("/contracts/:contractId", async (req: Request, res: Response) => {
+  const data = await getOrganizerContractById(
+    p(req, "contractId"),
+    req.user!.userId,
+    req.user!.role,
+  );
   sendSuccess(res, { data });
 });
 

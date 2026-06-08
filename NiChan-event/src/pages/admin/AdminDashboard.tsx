@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { TrendingUp, Calendar, Users, DollarSign, FileText, Clock, AlertCircle, ArrowUpRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, FileText, Clock, AlertCircle, ArrowUpRight } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { apiClient } from "@/services/apiClient";
 
@@ -8,9 +8,17 @@ type AdminDashboardResponse = {
   summary: {
     totalRequests: number;
     newRequests: number;
+    requestsThisMonth: number;
+    requestsTrend: number;
     totalEvents: number;
     activeEvents: number;
+    newEventsThisMonth: number;
+    eventsTrend: number;
+    totalCustomers: number;
+    newCustomersThisMonth: number;
+    customersTrend: number;
     monthlyRevenue: number;
+    revenueTrend: number;
   };
   monthlyRevenue: Record<string, number>;
   eventTypes: { type: string; _count: { type: number } }[];
@@ -50,6 +58,7 @@ const reqStatusColor  = Object.fromEntries(requestStatuses.map(s => [s.value, s.
 
 const formatMoney = (value: number) => `${Math.round(value / 1_000_000)}tr`;
 const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleDateString("vi-VN") : "Chưa cập nhật");
+const formatTrend = (value: number) => `${value > 0 ? "+" : ""}${value}% so với tháng trước`;
 
 const AdminDashboard = () => {
   const [data, setData] = useState<AdminDashboardResponse | null>(null);
@@ -101,29 +110,37 @@ const AdminDashboard = () => {
   if (error || !data) return <div className="font-body text-destructive">{error || "Không có dữ liệu dashboard"}</div>;
 
   const stats = [
-    { label: "Doanh thu tháng", value: formatMoney(data.summary.monthlyRevenue), change: `${data.summary.totalRequests} YC`, icon: DollarSign, color: "text-primary" },
-    { label: "Sự kiện đang chạy", value: String(data.summary.activeEvents), change: `${data.summary.totalEvents} tổng`, icon: Calendar, color: "text-secondary" },
-    { label: "Yêu cầu mới", value: String(data.summary.newRequests), change: `${data.summary.totalRequests} tổng`, icon: FileText, color: "text-primary" },
-    { label: "Khách hàng / yêu cầu", value: String(data.summary.totalRequests), change: "thực", icon: Users, color: "text-secondary" },
+    { label: "Doanh thu tháng", value: formatMoney(data.summary.monthlyRevenue), trend: data.summary.revenueTrend, sub: `${data.summary.activeEvents} sự kiện đang chạy`, icon: DollarSign, color: "text-primary" },
+    { label: "Sự kiện đang chạy", value: String(data.summary.activeEvents), trend: data.summary.eventsTrend, sub: `${data.summary.newEventsThisMonth} mới tháng này / ${data.summary.totalEvents} tổng`, icon: Calendar, color: "text-secondary" },
+    { label: "Yêu cầu mới", value: String(data.summary.newRequests), trend: data.summary.requestsTrend, sub: `${data.summary.requestsThisMonth} tiếp nhận tháng này`, icon: FileText, color: "text-primary" },
+    { label: "Khách hàng", value: String(data.summary.totalCustomers), trend: data.summary.customersTrend, sub: `${data.summary.newCustomersThisMonth} đăng ký mới tháng này`, icon: Users, color: "text-secondary" },
   ];
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, i) => (
-          <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
-            className="bg-surface-lowest rounded-xl p-5 shadow-ambient"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <stat.icon size={20} className={stat.color} />
-              <span className="flex items-center gap-1 text-xs font-body font-semibold text-secondary">
-                <TrendingUp size={12} /> {stat.change}
-              </span>
-            </div>
-            <p className="font-serif text-headline-lg text-foreground">{stat.value}</p>
-            <p className="font-body text-sm text-muted-foreground">{stat.label}</p>
-          </motion.div>
-        ))}
+        {stats.map((stat, i) => {
+          const positive = stat.trend >= 0;
+          const TrendIcon = positive ? TrendingUp : TrendingDown;
+          return (
+            <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
+              className="bg-surface-lowest rounded-xl p-5 shadow-ambient"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <stat.icon size={20} className={stat.color} />
+                <span
+                  className={`flex items-center gap-1 text-xs font-body font-semibold ${positive ? "text-secondary" : "text-destructive"}`}
+                  title={formatTrend(stat.trend)}
+                >
+                  <TrendIcon size={12} /> {stat.trend > 0 ? "+" : ""}{stat.trend}%
+                </span>
+              </div>
+              <p className="font-serif text-headline-lg text-foreground">{stat.value}</p>
+              <p className="font-body text-sm text-muted-foreground">{stat.label}</p>
+              <p className="font-body text-xs text-muted-foreground/80 mt-1">{stat.sub}</p>
+            </motion.div>
+          );
+        })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

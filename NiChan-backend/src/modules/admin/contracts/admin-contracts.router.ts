@@ -58,7 +58,7 @@ adminContractsRouter.put(
 
 // PATCH /api/admin/contracts/:id/send
 adminContractsRouter.patch("/:id/send", async (req: Request, res: Response) => {
-  const data = await sendContract(p(req, "id"));
+  const data = await sendContract(p(req, "id"), req.user!.userId);
   sendSuccess(res, { data });
 });
 

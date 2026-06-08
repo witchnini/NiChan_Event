@@ -1,27 +1,55 @@
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
 
+// Percent change between two periods. Returns a signed integer percentage.
+// When the previous period is empty we report +100% for any growth, 0% for none.
+const pctChange = (current: number, previous: number): number => {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+};
+
 export const getAdminDashboard = async () => {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
   const [
     totalRequests,
     newRequests,
+    requestsThisMonth,
+    requestsLastMonth,
     totalEvents,
     activeEvents,
-    monthlyRevenue,
+    eventsThisMonth,
+    eventsLastMonth,
+    totalCustomers,
+    customersThisMonth,
+    customersLastMonth,
+    revenueThisMonth,
+    revenueLastMonth,
     recentRequests,
     upcomingEvents,
     eventsByType,
   ] = await prisma.$transaction([
     prisma.consultationRequest.count(),
     prisma.consultationRequest.count({ where: { status: "new" } }),
+    prisma.consultationRequest.count({ where: { createdAt: { gte: monthStart } } }),
+    prisma.consultationRequest.count({ where: { createdAt: { gte: lastMonthStart, lt: monthStart } } }),
     prisma.event.count(),
     prisma.event.count({ where: { status: { in: ["planning", "contracted", "in_progress"] } } }),
+    prisma.event.count({ where: { createdAt: { gte: monthStart } } }),
+    prisma.event.count({ where: { createdAt: { gte: lastMonthStart, lt: monthStart } } }),
+    prisma.user.count({ where: { role: "customer", deletedAt: null } }),
+    prisma.user.count({ where: { role: "customer", deletedAt: null, createdAt: { gte: monthStart } } }),
+    prisma.user.count({ where: { role: "customer", deletedAt: null, createdAt: { gte: lastMonthStart, lt: monthStart } } }),
     // monthly revenue from transactions this month
     prisma.transaction.aggregate({
       where: { transactionDate: { gte: monthStart }, status: "completed" },
+      _sum: { amount: true },
+    }),
+    // revenue last month (for trend comparison)
+    prisma.transaction.aggregate({
+      where: { transactionDate: { gte: lastMonthStart, lt: monthStart }, status: "completed" },
       _sum: { amount: true },
     }),
     // recent requests
@@ -60,13 +88,24 @@ export const getAdminDashboard = async () => {
     revenueMap[key] = (revenueMap[key] ?? 0) + Number(tx.amount);
   }
 
+  const monthlyRevenueValue = Number(revenueThisMonth._sum.amount ?? 0);
+  const lastMonthRevenueValue = Number(revenueLastMonth._sum.amount ?? 0);
+
   return {
     summary: {
       totalRequests,
       newRequests,
+      requestsThisMonth,
+      requestsTrend: pctChange(requestsThisMonth, requestsLastMonth),
       totalEvents,
       activeEvents,
-      monthlyRevenue: Number(monthlyRevenue._sum.amount ?? 0),
+      newEventsThisMonth: eventsThisMonth,
+      eventsTrend: pctChange(eventsThisMonth, eventsLastMonth),
+      totalCustomers,
+      newCustomersThisMonth: customersThisMonth,
+      customersTrend: pctChange(customersThisMonth, customersLastMonth),
+      monthlyRevenue: monthlyRevenueValue,
+      revenueTrend: pctChange(monthlyRevenueValue, lastMonthRevenueValue),
     },
     monthlyRevenue: revenueMap,
     eventTypes: eventsByType,

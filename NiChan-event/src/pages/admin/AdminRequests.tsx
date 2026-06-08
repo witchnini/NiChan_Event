@@ -7,9 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
-import { apiClient } from "@/services/apiClient";
+import { ApiException, apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import { requestStatusLabels, requestStatusColors, requestStatusFilters, getRequestStatusLabel } from "@/lib/eventDisplay";
+import { requestStatusLabels, requestStatusColors, requestStatusFilters } from "@/lib/eventDisplay";
 
 type RequestItem = {
   id: string;
@@ -27,6 +27,7 @@ type RequestItem = {
   note?: string | null;
   assignedManagerId?: string | null;
   assignedManager?: { id: string; displayName: string } | null;
+  _count?: { events?: number };
 };
 
 type Manager = { id: string; displayName: string; email: string };
@@ -34,6 +35,13 @@ type Manager = { id: string; displayName: string; email: string };
 const statuses = requestStatusFilters;
 const statusLabel = requestStatusLabels;
 const statusColors = requestStatusColors;
+
+const getApiErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof ApiException) {
+    return error.details?.[0]?.message || error.message || fallback;
+  }
+  return error instanceof Error ? error.message : fallback;
+};
 
 /** Trích tên sự kiện từ trường note (định dạng "Ten su kien: ...") */
 const parseEventNameFromNote = (note?: string | null): string | null => {
@@ -126,13 +134,20 @@ const AdminRequests = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (request: RequestItem) => {
+    const hasLinkedProject = (request._count?.events ?? 0) > 0;
+    const message = hasLinkedProject
+      ? `Xoá yêu cầu ${request.requestCode} sẽ xoá luôn dự án và toàn bộ dữ liệu liên quan (hợp đồng, công việc, giao dịch, tin nhắn...). Hành động này không thể hoàn tác. Tiếp tục?`
+      : `Xoá yêu cầu ${request.requestCode}?`;
+
+    if (!window.confirm(message)) return;
+
     try {
-      await apiClient.del(`/admin/requests/${id}`);
+      await apiClient.del(`/admin/requests/${request.id}`);
       toast.success("Đã xoá yêu cầu");
       await loadRequests();
     } catch (error) {
-      toast.error("Xoá yêu cầu thất bại");
+      toast.error(getApiErrorMessage(error, "Xoá yêu cầu thất bại"));
     }
   };
 
@@ -199,8 +214,11 @@ const AdminRequests = () => {
                 </TableCell>
               </TableRow>
             )}
-            {requests.map((req) => (
-              <TableRow key={req.id} className="hover:bg-surface-low/50 transition-colors">
+            {requests.map((req) => {
+              const hasLinkedProject = (req._count?.events ?? 0) > 0;
+
+              return (
+                <TableRow key={req.id} className="hover:bg-surface-low/50 transition-colors">
                 <TableCell>
                   <span className="font-body text-sm font-bold text-primary">{req.requestCode}</span>
                   <p className="font-body text-xs text-muted-foreground mt-0.5">
@@ -280,17 +298,19 @@ const AdminRequests = () => {
                         ))}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
-                          onClick={() => handleDelete(req.id)}
+                          onClick={() => handleDelete(req)}
                           className="text-destructive focus:text-destructive"
+                          title={hasLinkedProject ? "Sẽ xoá luôn dự án liên kết" : undefined}
                         >
-                          Xoá yêu cầu
+                          {hasLinkedProject ? "Xoá yêu cầu & dự án" : "Xoá yêu cầu"}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </motion.div>

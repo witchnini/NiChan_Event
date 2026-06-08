@@ -55,3 +55,34 @@ export const createOrganizerDocument = async (
 
   return document;
 };
+
+export const deleteOrganizerDocument = async (
+  eventId: string,
+  documentId: string,
+  organizerUserId: string,
+) => {
+  const event = await assertOrganizerEvent(eventId, organizerUserId);
+  const document = await prisma.document.findFirst({
+    where: { id: documentId, eventId },
+    select: { id: true, name: true, uploadedById: true },
+  });
+
+  if (!document) throw createError("NOT_FOUND", "Document not found", 404);
+  if (document.uploadedById !== organizerUserId) {
+    throw createError("FORBIDDEN", "You can only delete documents you uploaded", 403);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.document.delete({ where: { id: documentId } });
+    await tx.eventActivity.create({
+      data: {
+        eventId,
+        actorUserId: organizerUserId,
+        iconName: "trash-2",
+        message: `Đã xóa tài liệu "${document.name}" khỏi dự án ${event.name}.`,
+      },
+    });
+  });
+
+  return { deleted: true };
+};

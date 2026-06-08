@@ -116,6 +116,7 @@ export const listRequests = async (filters: {
       include: {
         assignedManager: { select: { id: true, displayName: true, avatarUrl: true } },
         customerUser: { select: { id: true, displayName: true } },
+        _count: { select: { events: true } },
       },
     }),
     prisma.consultationRequest.count({ where }),
@@ -335,8 +336,72 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
   return result.updatedRequest;
 };
 
+// Xoá sâu toàn bộ dữ liệu phụ thuộc của các dự án (Event) trong cùng transaction.
+// Mọi quan hệ trong schema đều dùng onDelete: NoAction nên phải xoá con trước cha
+// theo đúng thứ tự khoá ngoại.
+const deleteEventsCascade = async (tx: Prisma.TransactionClient, eventIds: string[]) => {
+  if (eventIds.length === 0) return;
+
+  const events = { in: eventIds };
+  const contracts = await tx.contract.findMany({
+    where: { eventId: events },
+    select: { id: true },
+  });
+  const contractIds = contracts.map((c) => c.id);
+
+  // Cháu (tham chiếu tới con của Event)
+  await tx.taskStatusHistory.deleteMany({ where: { task: { eventId: events } } });
+  await tx.reviewScore.deleteMany({ where: { review: { eventId: events } } });
+  await tx.budgetItem.deleteMany({ where: { projectBudget: { eventId: events } } });
+  await tx.chatMessage.deleteMany({ where: { thread: { eventId: events } } });
+  await tx.chatThreadMember.deleteMany({ where: { thread: { eventId: events } } });
+
+  // Document & Transaction có thể trỏ tới Event hoặc Contract của Event
+  const contractFilter = contractIds.length ? [{ contractId: { in: contractIds } }] : [];
+  await tx.document.deleteMany({ where: { OR: [{ eventId: events }, ...contractFilter] } });
+  await tx.transaction.deleteMany({ where: { OR: [{ eventId: events }, ...contractFilter] } });
+  await tx.contractVersion.deleteMany({ where: { contractId: { in: contractIds } } });
+
+  // Con trực tiếp của Event
+  await tx.projectTask.deleteMany({ where: { eventId: events } });
+  await tx.review.deleteMany({ where: { eventId: events } });
+  await tx.projectBudget.deleteMany({ where: { eventId: events } });
+  await tx.chatThread.deleteMany({ where: { eventId: events } });
+  await tx.contract.deleteMany({ where: { eventId: events } });
+  await tx.eventMilestone.deleteMany({ where: { eventId: events } });
+  await tx.eventActivity.deleteMany({ where: { eventId: events } });
+  await tx.eventVendor.deleteMany({ where: { eventId: events } });
+  await tx.eventStaffAssignment.deleteMany({ where: { eventId: events } });
+  await tx.shiftSchedule.deleteMany({ where: { eventId: events } });
+
+  // Portfolio là hạng mục showcase công khai, chỉ gỡ liên kết để không mất nội dung
+  await tx.portfolioItem.updateMany({ where: { eventId: events }, data: { eventId: null } });
+
+  // Dọn thông báo trỏ tới các dự án này (entityId không phải khoá ngoại, làm sạch để tránh link hỏng)
+  await tx.notification.deleteMany({ where: { entityType: "event", entityId: events } });
+
+  await tx.event.deleteMany({ where: { id: events } });
+};
+
 export const deleteRequest = async (id: string) => {
-  const existing = await prisma.consultationRequest.findUnique({ where: { id } });
+  const existing = await prisma.consultationRequest.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      events: { select: { id: true } },
+    },
+  });
   if (!existing) throw createError("NOT_FOUND", "Request not found", 404);
-  await prisma.consultationRequest.delete({ where: { id } });
+
+  const eventIds = existing.events.map((e) => e.id);
+
+  await prisma.$transaction(async (tx) => {
+    await deleteEventsCascade(tx, eventIds);
+    await tx.notification.deleteMany({
+      where: { entityType: "consultation_request", entityId: id },
+    });
+    await tx.consultationRequest.delete({ where: { id } });
+  });
+
+  return { deleted: true };
 };

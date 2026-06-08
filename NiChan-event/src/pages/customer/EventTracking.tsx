@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2 } from "lucide-react";
+import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -28,7 +28,7 @@ type EventDetail = {
 
 type Milestone = { id: string; title: string; dueDate?: string | null; milestoneDate?: string | null; status: string; description?: string | null };
 type Message = { id: string; senderUserId: string; sender?: { displayName: string } | null; messageText: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; sentAt: string };
-type DocumentItem = { id: string; name?: string; fileName?: string; fileType?: string; createdAt: string; status?: string; event?: { id: string; name: string } };
+type DocumentItem = { id: string; name?: string; fileName?: string; fileType?: string; createdAt: string; status?: string; contractId?: string | null; fileUrl?: string | null; event?: { id: string; name: string } };
 type Transaction = { id: string; description: string; amount: string | number; transactionDate: string; paymentMethod?: string | null; status: string; event?: { id: string } };
 
 const DEFAULT_MILESTONES: Milestone[] = [
@@ -44,6 +44,7 @@ const DEFAULT_MILESTONES: Milestone[] = [
 const EventTracking = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -294,6 +295,7 @@ const EventTracking = () => {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl space-y-4">
             {documents.map(doc => {
               const name = doc.name || doc.fileName || "Tài liệu";
+              const isContract = Boolean(doc.contractId);
               return (
                 <div key={doc.id} className="flex items-center justify-between bg-surface-lowest rounded-xl p-5 shadow-ambient">
                   <div className="flex items-center gap-4">
@@ -303,7 +305,11 @@ const EventTracking = () => {
                       <p className="font-body text-xs text-muted-foreground">{doc.fileType || "Tệp"} - {new Date(doc.createdAt).toLocaleDateString("vi-VN")}</p>
                     </div>
                   </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDownload(name)}><Download size={14} /></Button>
+                  {isContract ? (
+                    <Button variant="outline" size="sm" onClick={() => navigate(`/dashboard/hop-dong/${doc.contractId}`)}><Eye size={14} className="mr-1" /> Xem hợp đồng</Button>
+                  ) : (
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDownload(name)}><Download size={14} /></Button>
+                  )}
                 </div>
               );
             })}

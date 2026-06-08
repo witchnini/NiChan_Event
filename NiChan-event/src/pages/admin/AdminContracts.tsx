@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { FileText, Download, Eye, Send, MoreHorizontal, Trash2, Plus, Search, Edit2, Clock, History } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { FileText, Eye, Send, MoreHorizontal, Trash2, Plus, Search, Edit2, Clock, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
+import ContractPdfButton from "@/components/ContractPdfButton";
 
 type ContractVersion = {
   id: string;
@@ -90,6 +92,7 @@ const emptyForm = {
 };
 
 const AdminContracts = () => {
+  const navigate = useNavigate();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [search, setSearch] = useState("");
@@ -252,15 +255,6 @@ const AdminContracts = () => {
     }
   };
 
-  const handleDownload = (contract: Contract) => {
-    const url = contract.versions?.[0]?.documentUrl ?? contract.documents?.[0]?.fileUrl;
-    if (url) {
-      window.open(url, "_blank", "noopener");
-    } else {
-      toast.info("Hợp đồng chưa có tệp PDF đính kèm");
-    }
-  };
-
   const renderContractForm = (mode: "create" | "edit") => (
     <div className="space-y-4">
       {mode === "create" ? (
@@ -368,14 +362,16 @@ const AdminContracts = () => {
                 <TableCell><span className={`px-3 py-1 rounded-full text-xs font-body font-semibold ${statusColors[contract.status] ?? "bg-muted text-muted-foreground"}`}>{statusLabel[contract.status] ?? contract.status}</span></TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openView(contract)} title="Xem"><Eye size={14} /></Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDownload(contract)} title="Tải PDF"><Download size={14} /></Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(`/admin/hop-dong/${contract.id}`)} title="Xem bản đầy đủ"><Eye size={14} /></Button>
+                    <ContractPdfButton contract={contract} detailPath={`/admin/contracts/${contract.id}`} variant="ghost" size="icon" label="" className="h-8 w-8" />
                     {contract.status === "draft" && (
                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleSend(contract)} title="Gửi khách"><Send size={14} /></Button>
                     )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal size={14} /></Button></DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}`)}><Eye size={12} className="mr-2" /> Xem bản đầy đủ</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openView(contract)}><FileText size={12} className="mr-2" /> Xem nhanh</DropdownMenuItem>
                         <DropdownMenuItem onClick={() => openEdit(contract)}><Edit2 size={12} className="mr-2" /> Chỉnh sửa</DropdownMenuItem>
                         {contract.status === "draft" && (
                           <DropdownMenuItem onClick={() => handleSend(contract)}><Send size={12} className="mr-2" /> Gửi khách hàng</DropdownMenuItem>
@@ -477,7 +473,7 @@ const AdminContracts = () => {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setViewItem(null)}>Đóng</Button>
-            <Button variant="outline" onClick={() => { if (viewItem) handleDownload(viewItem); }}><Download size={14} className="mr-1" /> Tải PDF</Button>
+            {viewItem && <ContractPdfButton contract={viewItem} detailPath={`/admin/contracts/${viewItem.id}`} variant="outline" label="Tải PDF" />}
             {viewItem?.status === "draft" && (
               <Button variant="hero" onClick={() => { if (viewItem) handleSend(viewItem); setViewItem(null); }}><Send size={14} className="mr-1" /> Gửi khách</Button>
             )}

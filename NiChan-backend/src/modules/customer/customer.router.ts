@@ -6,6 +6,7 @@ import {
   deleteChatMessage,
   getChatMessages,
   getCustomerContracts,
+  getCustomerContractById,
   getCustomerDashboard,
   getCustomerDocuments,
   getCustomerEventById,
@@ -73,6 +74,12 @@ customerRouter.delete("/events/:eventId/chat-messages/:messageId", async (req: R
 // GET /api/customer/contracts
 customerRouter.get("/contracts", async (req: Request, res: Response) => {
   const data = await getCustomerContracts(req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/customer/contracts/:id
+customerRouter.get("/contracts/:id", async (req: Request, res: Response) => {
+  const data = await getCustomerContractById(p(req, "id"), req.user!.userId);
   sendSuccess(res, { data });
 });
 

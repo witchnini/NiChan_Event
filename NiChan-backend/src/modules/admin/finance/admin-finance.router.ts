@@ -12,6 +12,7 @@ import {
   listTransactions,
   createTransaction,
   updateTransaction,
+  deleteTransaction,
 } from "./admin-finance.service";
 
 export const adminFinanceRouter = Router();
@@ -66,3 +67,9 @@ adminFinanceRouter.put(
     sendSuccess(res, { data });
   },
 );
+
+// DELETE /api/admin/transactions/:id
+adminFinanceRouter.delete("/transactions/:id", async (req: Request, res: Response) => {
+  await deleteTransaction(p(req, "id"));
+  sendSuccess(res, { data: { deleted: true } });
+});

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Calendar, Download, FileText, MessageSquare, Paperclip, Search, Send, Trash2, Upload, Users } from "lucide-react";
+import { Calendar, Download, Eye, FileText, MessageSquare, Paperclip, Search, Send, Trash2, Upload, Users } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ChatAttachment from "@/components/ChatAttachment";
+import ContractPdfButton from "@/components/ContractPdfButton";
 import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";
@@ -36,6 +38,8 @@ type DocumentItem = {
   name?: string;
   fileType?: string;
   fileUrl?: string;
+  contractId?: string | null;
+  uploadedById?: string | null;
   createdAt: string;
   status?: string;
 };
@@ -45,6 +49,7 @@ const formatDate = (value?: string | null) =>
 
 const OrganizerCommunication = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [search, setSearch] = useState("");
@@ -234,6 +239,19 @@ const OrganizerCommunication = () => {
     }
   };
 
+  const handleDeleteDocument = async (doc: DocumentItem) => {
+    if (!selectedProjectId) return;
+    if (!window.confirm(`Xóa tài liệu "${doc.name || "Tài liệu"}"?`)) return;
+
+    try {
+      await apiClient.del(`/organizer/events/${selectedProjectId}/documents/${doc.id}`);
+      setDocuments((current) => current.filter((item) => item.id !== doc.id));
+      toast.success("Đã xóa tài liệu");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Xóa tài liệu thất bại");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -386,6 +404,7 @@ const OrganizerCommunication = () => {
               </div>
 
               {documents.map((doc) => {
+                const canDelete = doc.uploadedById === user?.userId;
                 const name = doc.name || "Tài liệu";
                 return (
                   <div key={doc.id} className="flex items-center justify-between bg-background rounded-xl p-5 border border-border">
@@ -396,11 +415,45 @@ const OrganizerCommunication = () => {
                         <p className="font-body text-xs text-muted-foreground">{doc.fileType || "Tệp"} - {new Date(doc.createdAt).toLocaleDateString("vi-VN")}</p>
                       </div>
                     </div>
-                    {doc.fileUrl && (
-                      <a href={doc.fileUrl} target="_blank" rel="noreferrer" className="shrink-0">
-                        <Button variant="ghost" size="icon" className="h-8 w-8"><Download size={14} /></Button>
-                      </a>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {doc.contractId && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => navigate(`/ban-to-chuc/hop-dong/${doc.contractId}`)}
+                          title="Xem hợp đồng"
+                        >
+                          <Eye size={14} />
+                        </Button>
+                      )}
+                      {doc.contractId && (
+                        <ContractPdfButton
+                          detailPath={`/organizer/contracts/${doc.contractId}`}
+                          variant="ghost"
+                          size="icon"
+                          label=""
+                          className="h-8 w-8"
+                          title="Lưu hợp đồng PDF"
+                        />
+                      )}
+                      {!doc.contractId && doc.fileUrl && (
+                        <a href={doc.fileUrl} target="_blank" rel="noreferrer">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="Tải xuống"><Download size={14} /></Button>
+                        </a>
+                      )}
+                      {canDelete && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDeleteDocument(doc)}
+                          title="Xóa tài liệu"
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 );
               })}

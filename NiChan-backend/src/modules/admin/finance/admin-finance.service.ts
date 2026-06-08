@@ -24,8 +24,17 @@ export const getProjectSummary = async () => {
       type: true,
       status: true,
       budgetEstimated: true,
-      budgetActual: true,
       transactions: { select: { amount: true, status: true } },
+      // Actual spend is derived from committed/paid budget items — the same
+      // source as the expense breakdown — not the stale Event.budgetActual column.
+      budgets: {
+        select: {
+          items: {
+            where: { status: { in: ["committed", "paid"] } },
+            select: { actualAmount: true },
+          },
+        },
+      },
     },
   });
 
@@ -33,13 +42,17 @@ export const getProjectSummary = async () => {
     const totalCollected = e.transactions
       .filter((t) => t.status === "completed")
       .reduce((sum, t) => sum + Number(t.amount), 0);
+    const budgetActual = e.budgets.reduce(
+      (sum, b) => sum + b.items.reduce((acc, item) => acc + Number(item.actualAmount), 0),
+      0,
+    );
     return {
       id: e.id,
       name: e.name,
       type: e.type,
       status: e.status,
       budgetEstimated: Number(e.budgetEstimated ?? 0),
-      budgetActual: Number(e.budgetActual ?? 0),
+      budgetActual,
       totalCollected,
     };
   });
@@ -152,4 +165,8 @@ export const updateTransaction = async (id: string, input: Partial<TransactionIn
       ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod } : {}),
     },
   });
+};
+
+export const deleteTransaction = async (id: string) => {
+  return prisma.transaction.delete({ where: { id } });
 };

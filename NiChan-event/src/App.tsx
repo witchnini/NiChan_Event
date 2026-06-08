@@ -24,6 +24,7 @@ import CustomerDashboard from "./pages/customer/CustomerDashboard.tsx";
 import MyEvents from "./pages/customer/MyEvents.tsx";
 import EventTracking from "./pages/customer/EventTracking.tsx";
 import MyContracts from "./pages/customer/MyContracts.tsx";
+import ContractView from "./pages/customer/ContractView.tsx";
 import ReviewRating from "./pages/customer/ReviewRating.tsx";
 // Organizer
 import OrganizerLayout from "./pages/organizer/OrganizerLayout.tsx";
@@ -101,6 +102,7 @@ const App = () => (
             >
               <Route index element={<OrganizerDashboard />} />
               <Route path="du-an" element={<OrganizerProjects />} />
+              <Route path="hop-dong/:id" element={<ContractView />} />
               <Route path="trao-doi" element={<OrganizerCommunication />} />
               <Route path="nha-cung-cap" element={<OrganizerVendors />} />
               <Route path="ngan-sach" element={<OrganizerBudget />} />
@@ -123,6 +125,7 @@ const App = () => (
               <Route path="nguoi-dung" element={<AdminUsers />} />
               <Route path="noi-dung" element={<AdminContent />} />
               <Route path="hop-dong" element={<AdminContracts />} />
+              <Route path="hop-dong/:id" element={<ContractView />} />
               <Route path="tai-chinh" element={<AdminFinance />} />
               <Route path="bao-cao" element={<AdminReports />} />
               <Route path="du-an" element={<AdminProjects />} />
@@ -148,6 +151,7 @@ const App = () => (
             <Route path="/dashboard/su-kien" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><MyEvents /></PublicLayout></ProtectedRoute>} />
             <Route path="/dashboard/su-kien/:id" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><EventTracking /></PublicLayout></ProtectedRoute>} />
             <Route path="/dashboard/hop-dong" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><MyContracts /></PublicLayout></ProtectedRoute>} />
+            <Route path="/dashboard/hop-dong/:id" element={<ProtectedRoute allowedRoles={["customer", "admin", "organizer"]}><PublicLayout><ContractView /></PublicLayout></ProtectedRoute>} />
             <Route path="/dashboard/danh-gia" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><ReviewRating /></PublicLayout></ProtectedRoute>} />
             <Route path="/dashboard/ho-so" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><CustomerProfile /></PublicLayout></ProtectedRoute>} />
 
