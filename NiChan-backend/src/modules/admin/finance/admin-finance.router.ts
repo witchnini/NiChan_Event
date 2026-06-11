@@ -9,6 +9,7 @@ import {
   getProjectSummary,
   getMonthlyPL,
   getExpenses,
+  listFinanceContracts,
   listTransactions,
   createTransaction,
   updateTransaction,
@@ -36,12 +37,20 @@ adminFinanceRouter.get("/finance/expenses", async (_req: Request, res: Response)
   sendSuccess(res, { data });
 });
 
+// GET /api/admin/finance/contracts
+adminFinanceRouter.get("/finance/contracts", async (_req: Request, res: Response) => {
+  const data = await listFinanceContracts();
+  sendSuccess(res, { data });
+});
+
 // GET /api/admin/transactions
 adminFinanceRouter.get("/transactions", async (req: Request, res: Response) => {
   const pg = parsePagination(req, "transactionDate");
   const { items, total } = await listTransactions({
     eventId: q(req, "eventId"),
+    contractId: q(req, "contractId"),
     status: q(req, "status"),
+    search: q(req, "search"),
     skip: pg.skip,
     take: pg.take,
   });

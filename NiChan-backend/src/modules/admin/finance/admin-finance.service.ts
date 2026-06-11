@@ -1,5 +1,7 @@
-import { prisma } from "../../../lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { prisma } from "../../../lib/prisma";
+import { createError } from "../../../middleware/errorHandler";
 
 export const transactionSchema = z.object({
   eventId: z.string().uuid().optional().nullable(),
@@ -7,13 +9,78 @@ export const transactionSchema = z.object({
   description: z.string().min(1).max(500),
   amount: z.number().positive(),
   transactionDate: z.string().datetime({ offset: true }),
-  paymentMethod: z.string().max(100).optional(),
+  paymentMethod: z.string().max(100).optional().nullable(),
   status: z.enum(["pending", "completed", "cancelled"]).default("pending"),
 });
 
 export type TransactionInput = z.infer<typeof transactionSchema>;
 
-// ─── Finance Reports ──────────────────────────────────────────────────────────
+const expenseStatuses = ["committed", "paid"];
+const billableContractStatuses = ["sent", "active", "liquidated"];
+
+const toNumber = (value: unknown) => Number(value ?? 0);
+
+const transactionInclude = {
+  event: {
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      status: true,
+      eventDate: true,
+      customerUser: { select: { id: true, displayName: true } },
+      consultationRequest: { select: { customerName: true, eventType: true, note: true } },
+    },
+  },
+  contract: {
+    select: {
+      id: true,
+      contractCode: true,
+      totalValue: true,
+      status: true,
+      eventId: true,
+    },
+  },
+};
+
+const ensureEvent = async (eventId: string) => {
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { id: true },
+  });
+  if (!event) throw createError("NOT_FOUND", "Event not found", 404);
+};
+
+const normalizeTransactionRelations = async (
+  input: Partial<TransactionInput>,
+  existing?: { eventId: string | null; contractId: string | null },
+) => {
+  let eventId =
+    input.eventId === undefined ? existing?.eventId ?? null : input.eventId ?? null;
+  const contractId =
+    input.contractId === undefined
+      ? existing?.contractId ?? null
+      : input.contractId ?? null;
+
+  if (contractId) {
+    const contract = await prisma.contract.findUnique({
+      where: { id: contractId },
+      select: { id: true, eventId: true },
+    });
+    if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+    if (eventId && eventId !== contract.eventId) {
+      throw createError(
+        "RELATION_MISMATCH",
+        "Transaction event must match the selected contract event",
+        409,
+      );
+    }
+    eventId = contract.eventId;
+  }
+
+  if (eventId) await ensureEvent(eventId);
+  return { eventId, contractId };
+};
 
 export const getProjectSummary = async () => {
   const events = await prisma.event.findMany({
@@ -25,35 +92,62 @@ export const getProjectSummary = async () => {
       status: true,
       budgetEstimated: true,
       transactions: { select: { amount: true, status: true } },
-      // Actual spend is derived from committed/paid budget items — the same
-      // source as the expense breakdown — not the stale Event.budgetActual column.
+      contracts: {
+        where: { status: { not: "cancelled" } },
+        select: { id: true, status: true, totalValue: true },
+      },
       budgets: {
         select: {
           items: {
-            where: { status: { in: ["committed", "paid"] } },
-            select: { actualAmount: true },
+            select: { estimatedAmount: true, actualAmount: true, status: true },
           },
         },
       },
     },
   });
 
-  return events.map((e) => {
-    const totalCollected = e.transactions
-      .filter((t) => t.status === "completed")
-      .reduce((sum, t) => sum + Number(t.amount), 0);
-    const budgetActual = e.budgets.reduce(
-      (sum, b) => sum + b.items.reduce((acc, item) => acc + Number(item.actualAmount), 0),
+  return events.map((event) => {
+    const totalCollected = event.transactions
+      .filter((transaction) => transaction.status === "completed")
+      .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+    const pendingCollection = event.transactions
+      .filter((transaction) => transaction.status === "pending")
+      .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+    const allBudgetItems = event.budgets.flatMap((budget) => budget.items);
+    const budgetActual = allBudgetItems
+      .filter((item) => expenseStatuses.includes(item.status))
+      .reduce((sum, item) => sum + toNumber(item.actualAmount), 0);
+    const budgetPlanned = allBudgetItems.reduce(
+      (sum, item) => sum + toNumber(item.estimatedAmount),
       0,
     );
+    const totalContractValue = event.contracts
+      .filter((contract) => billableContractStatuses.includes(contract.status))
+      .reduce((sum, contract) => sum + toNumber(contract.totalValue), 0);
+    const budgetEstimated = toNumber(event.budgetEstimated) || budgetPlanned;
+    const receivable = totalContractValue
+      ? Math.max(totalContractValue - totalCollected, 0)
+      : 0;
+    const profit = totalCollected - budgetActual;
+
     return {
-      id: e.id,
-      name: e.name,
-      type: e.type,
-      status: e.status,
-      budgetEstimated: Number(e.budgetEstimated ?? 0),
+      id: event.id,
+      name: event.name,
+      type: event.type,
+      status: event.status,
+      budgetEstimated,
+      budgetPlanned,
       budgetActual,
       totalCollected,
+      pendingCollection,
+      totalContractValue,
+      receivable,
+      profit,
+      margin: totalCollected ? Math.round((profit / totalCollected) * 100) : 0,
+      collectionRate: totalContractValue
+        ? Math.min(100, Math.round((totalCollected / totalContractValue) * 100))
+        : 0,
+      contractCount: event.contracts.length,
     };
   });
 };
@@ -80,23 +174,24 @@ export const getMonthlyPL = async () => {
   ]);
 
   const map: Record<string, { revenue: number; expenses: number }> = {};
-  // Pre-seed the last 12 months so the chart shows a continuous timeline.
   for (let i = 0; i < 12; i++) {
-    const d = new Date(twelveMonthsAgo);
-    d.setMonth(d.getMonth() + i);
-    map[monthKey(d)] = { revenue: 0, expenses: 0 };
+    const date = new Date(twelveMonthsAgo);
+    date.setMonth(date.getMonth() + i);
+    map[monthKey(date)] = { revenue: 0, expenses: 0 };
   }
 
-  for (const tx of transactions) {
-    const key = monthKey(tx.transactionDate);
+  for (const transaction of transactions) {
+    const key = monthKey(transaction.transactionDate);
     if (!map[key]) map[key] = { revenue: 0, expenses: 0 };
-    if (tx.status === "completed") map[key].revenue += Number(tx.amount);
+    if (transaction.status === "completed") {
+      map[key].revenue += toNumber(transaction.amount);
+    }
   }
 
   for (const item of budgetItems) {
     const key = monthKey(item.updatedAt);
     if (!map[key]) map[key] = { revenue: 0, expenses: 0 };
-    map[key].expenses += Number(item.actualAmount);
+    map[key].expenses += toNumber(item.actualAmount);
   }
 
   return Object.entries(map)
@@ -105,33 +200,109 @@ export const getMonthlyPL = async () => {
 };
 
 export const getExpenses = async () => {
-  const items = await prisma.budgetItem.findMany({
+  return prisma.budgetItem.findMany({
     where: { status: { in: ["committed", "paid"] } },
-    include: { vendor: { select: { id: true, name: true } } },
+    include: {
+      vendor: { select: { id: true, name: true } },
+      projectBudget: {
+        select: {
+          id: true,
+          name: true,
+          event: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+              status: true,
+            },
+          },
+        },
+      },
+    },
     orderBy: { updatedAt: "desc" },
   });
-  return items;
 };
 
-// ─── Transactions CRUD ────────────────────────────────────────────────────────
+export const listFinanceContracts = async () => {
+  const contracts = await prisma.contract.findMany({
+    where: { status: { not: "cancelled" } },
+    orderBy: { createdAt: "desc" },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          type: true,
+          status: true,
+          eventDate: true,
+          customerUser: { select: { id: true, displayName: true } },
+          consultationRequest: { select: { customerName: true, eventType: true, note: true } },
+        },
+      },
+      customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
+      transactions: {
+        where: { status: { in: ["pending", "completed"] } },
+        select: { amount: true, status: true },
+      },
+    },
+  });
+
+  return contracts.map((contract) => {
+    const totalValue = toNumber(contract.totalValue);
+    const collectedAmount = contract.transactions
+      .filter((transaction) => transaction.status === "completed")
+      .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+    const pendingAmount = contract.transactions
+      .filter((transaction) => transaction.status === "pending")
+      .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+
+    return {
+      id: contract.id,
+      contractCode: contract.contractCode,
+      status: contract.status,
+      totalValue,
+      collectedAmount,
+      pendingAmount,
+      outstandingAmount: Math.max(totalValue - collectedAmount, 0),
+      currentVersion: contract.currentVersion,
+      sentAt: contract.sentAt,
+      signedAt: contract.signedAt,
+      event: contract.event,
+      customerUser: contract.customerUser,
+    };
+  });
+};
 
 export const listTransactions = async (filters: {
   eventId?: string;
+  contractId?: string;
   status?: string;
+  search?: string;
   skip: number;
   take: number;
 }) => {
-  const where = {
+  const where: Prisma.TransactionWhereInput = {
     ...(filters.eventId ? { eventId: filters.eventId } : {}),
+    ...(filters.contractId ? { contractId: filters.contractId } : {}),
     ...(filters.status ? { status: filters.status } : {}),
+    ...(filters.search
+      ? {
+          OR: [
+            { description: { contains: filters.search } },
+            { event: { name: { contains: filters.search } } },
+            { contract: { contractCode: { contains: filters.search } } },
+          ],
+        }
+      : {}),
   };
+
   const [items, total] = await prisma.$transaction([
     prisma.transaction.findMany({
       where,
       skip: filters.skip,
       take: filters.take,
       orderBy: { transactionDate: "desc" },
-      include: { event: { select: { id: true, name: true } } },
+      include: transactionInclude,
     }),
     prisma.transaction.count({ where }),
   ]);
@@ -139,31 +310,49 @@ export const listTransactions = async (filters: {
 };
 
 export const createTransaction = async (input: TransactionInput) => {
+  const relation = await normalizeTransactionRelations(input);
   return prisma.transaction.create({
     data: {
-      eventId: input.eventId,
-      contractId: input.contractId,
+      eventId: relation.eventId,
+      contractId: relation.contractId,
       description: input.description,
       amount: input.amount,
       transactionDate: new Date(input.transactionDate),
-      paymentMethod: input.paymentMethod,
+      paymentMethod: input.paymentMethod || null,
       status: input.status,
     },
+    include: transactionInclude,
   });
 };
 
 export const updateTransaction = async (id: string, input: Partial<TransactionInput>) => {
+  const existing = await prisma.transaction.findUnique({
+    where: { id },
+    select: { id: true, eventId: true, contractId: true },
+  });
+  if (!existing) throw createError("NOT_FOUND", "Transaction not found", 404);
+
+  const relation = await normalizeTransactionRelations(input, existing);
+  const data: Prisma.TransactionUncheckedUpdateInput = {
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    ...(input.amount !== undefined ? { amount: input.amount } : {}),
+    ...(input.transactionDate !== undefined
+      ? { transactionDate: new Date(input.transactionDate) }
+      : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod || null } : {}),
+  };
+
+  if (input.eventId !== undefined) data.eventId = relation.eventId;
+  if (input.contractId !== undefined) {
+    data.contractId = relation.contractId;
+    data.eventId = relation.eventId;
+  }
+
   return prisma.transaction.update({
     where: { id },
-    data: {
-      ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
-      ...(input.contractId !== undefined ? { contractId: input.contractId } : {}),
-      ...(input.description !== undefined ? { description: input.description } : {}),
-      ...(input.amount !== undefined ? { amount: input.amount } : {}),
-      ...(input.transactionDate !== undefined ? { transactionDate: new Date(input.transactionDate) } : {}),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod } : {}),
-    },
+    data,
+    include: transactionInclude,
   });
 };
 

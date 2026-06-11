@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { FileText, Eye, CheckCircle, Download } from "lucide-react";
+import { FileText, Eye, CheckCircle, Download, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import SectionHeading from "@/components/SectionHeading";
 import { apiClient } from "@/services/apiClient";
@@ -24,9 +24,24 @@ type Contract = {
     consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
   } | null;
   versions?: { scopeText?: string; paymentTerms?: string; generalTerms?: string }[];
+  transactions?: { id: string; amount: string | number; status: string }[];
 };
 
 const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + "đ";
+const billableStatuses = new Set(["sent", "active", "liquidated"]);
+
+const contractPaid = (contract: Contract) =>
+  (contract.transactions ?? [])
+    .filter((transaction) => transaction.status === "completed")
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+
+const contractPending = (contract: Contract) =>
+  (contract.transactions ?? [])
+    .filter((transaction) => transaction.status === "pending")
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+
+const contractOutstanding = (contract: Contract) =>
+  Math.max(Number(contract.totalValue || 0) - contractPaid(contract) - contractPending(contract), 0);
 
 const MyContracts = () => {
   const navigate = useNavigate();
@@ -48,6 +63,12 @@ const MyContracts = () => {
   }, []);
 
   const openContract = (contract: Contract) => navigate(`/dashboard/hop-dong/${contract.id}`);
+  const openPayment = (contract: Contract) => {
+    if (!contract.event?.id) return;
+    navigate(`/dashboard/su-kien/${contract.event.id}?tab=payment&contractId=${contract.id}`);
+  };
+  const canPay = (contract: Contract) =>
+    Boolean(contract.event?.id) && billableStatuses.has(contract.status) && contractOutstanding(contract) > 0;
 
   return (
     <div className="min-h-screen pt-24 pb-16">
@@ -75,9 +96,13 @@ const MyContracts = () => {
                 <div className="flex items-center gap-4">
                   <div className="text-right">
                     <p className="font-serif font-bold text-foreground">{money(contract.totalValue)}</p>
+                    <p className="font-body text-xs text-muted-foreground">Còn lại: {money(contractOutstanding(contract))}</p>
                     <span className="inline-flex items-center gap-1 text-xs font-body font-semibold text-secondary"><CheckCircle size={12} /> {getContractStatusLabel(contract.status)}</span>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {canPay(contract) && (
+                      <Button variant="hero" size="sm" onClick={() => openPayment(contract)}><CreditCard size={16} className="mr-1" /> Thanh toán</Button>
+                    )}
                     <Button variant="outline" size="sm" onClick={() => openContract(contract)}><Eye size={16} className="mr-1" /> Xem</Button>
                     <Button variant="hero" size="sm" onClick={() => openContract(contract)}><Download size={16} className="mr-1" /> Tải PDF</Button>
                   </div>

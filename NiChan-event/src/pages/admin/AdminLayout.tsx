@@ -7,6 +7,7 @@ import {
   FolderKanban, UserCog, Building2,
 } from "lucide-react";
 import { apiClient } from "@/services/apiClient";
+import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
@@ -86,6 +87,22 @@ const AdminLayout = () => {
     load();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Real-time: nhận thông báo mới qua Socket.IO và thêm vào đầu danh sách.
+  useEffect(() => {
+    const socket = getSocket();
+    const handleNotification = (payload: { id: string; message: string; createdAt: string }) => {
+      setNotifications((prev) => (
+        prev.some((n) => n.id === payload.id)
+          ? prev
+          : [{ id: payload.id, message: payload.message, isRead: false, createdAt: payload.createdAt }, ...prev]
+      ));
+    };
+    socket.on("notification", handleNotification);
+    return () => {
+      socket.off("notification", handleNotification);
     };
   }, []);
 

@@ -1,7 +1,53 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { createError } from "../../middleware/errorHandler";
-import { emitNewMessage, emitMessageDeleted } from "../../lib/socket";
+import { emitNewMessage, emitMessageDeleted, emitNotification } from "../../lib/socket";
 import { z } from "zod";
+
+type Tx = Prisma.TransactionClient;
+
+const billableContractStatuses = ["sent", "active", "liquidated"];
+const payableTransactionStatuses = ["pending", "completed"];
+const toNumber = (value: unknown) => Number(value ?? 0);
+
+const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
+
+const customerTransactionInclude = {
+  event: {
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      status: true,
+      eventDate: true,
+      customerUser: { select: { id: true, displayName: true } },
+      consultationRequest: { select: { customerName: true, eventType: true, note: true } },
+    },
+  },
+  contract: {
+    select: {
+      id: true,
+      contractCode: true,
+      totalValue: true,
+      status: true,
+      eventId: true,
+    },
+  },
+} satisfies Prisma.TransactionInclude;
+
+const payableAmounts = (totalValue: unknown, transactions: { amount: unknown; status: string }[]) => {
+  const completed = transactions
+    .filter((transaction) => transaction.status === "completed")
+    .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+  const pending = transactions
+    .filter((transaction) => transaction.status === "pending")
+    .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+  return {
+    completed,
+    pending,
+    outstanding: Math.max(toNumber(totalValue) - completed - pending, 0),
+  };
+};
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -101,6 +147,28 @@ export const getCustomerEventById = async (eventId: string, customerUserId: stri
         },
       },
       milestones: { orderBy: { sortOrder: "asc" } },
+      contracts: {
+        where: { status: { in: billableContractStatuses } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          contractCode: true,
+          status: true,
+          totalValue: true,
+          currentVersion: true,
+          sentAt: true,
+          signedAt: true,
+          transactions: {
+            where: { status: { in: payableTransactionStatuses } },
+            select: { id: true, amount: true, status: true },
+          },
+          versions: {
+            take: 1,
+            orderBy: { createdAt: "desc" },
+            select: { paymentTerms: true },
+          },
+        },
+      },
       _count: { select: { tasks: true } },
     },
   });
@@ -317,6 +385,10 @@ export const getCustomerContracts = async (customerUserId: string) => {
           },
         },
       },
+      transactions: {
+        where: { status: { in: payableTransactionStatuses } },
+        select: { id: true, amount: true, status: true },
+      },
       versions: { take: 1, orderBy: { createdAt: "desc" } },
     },
     orderBy: { createdAt: "desc" },
@@ -354,9 +426,194 @@ export const getCustomerContractById = async (contractId: string, customerUserId
 export const getCustomerTransactions = async (customerUserId: string) => {
   return prisma.transaction.findMany({
     where: { event: { customerUserId } },
-    include: { event: { select: { id: true, name: true } } },
+    include: customerTransactionInclude,
     orderBy: { transactionDate: "desc" },
   });
+};
+
+// ─── Payments (customer view) ──────────────────────────────────────────────────────
+
+const customerPaymentSchema = z
+  .object({
+    eventId: z.string().uuid().optional().nullable(),
+    contractId: z.string().uuid().optional().nullable(),
+    amount: z.number().positive(),
+    paymentMethod: z.string().min(1).max(100),
+    note: z.string().max(500).optional().nullable(),
+  })
+  .refine((data) => Boolean(data.eventId || data.contractId), {
+    message: "Event or contract is required",
+  });
+
+const notifyAdminsAboutPayment = async (
+  tx: Tx,
+  input: {
+    transactionId: string;
+    eventName: string;
+    amount: number;
+    customerName: string;
+  },
+) => {
+  const admins = await tx.user.findMany({
+    where: { role: "admin", status: "active", deletedAt: null },
+    select: { id: true },
+  });
+
+  return Promise.all(
+    admins.map((admin) =>
+      tx.notification.create({
+        data: {
+          userId: admin.id,
+          scope: "admin",
+          type: "payment",
+          title: "Thanh toán mới",
+          message: `${input.customerName} đã gửi thanh toán ${money(input.amount)} cho ${input.eventName}.`,
+          entityType: "transaction",
+          entityId: input.transactionId,
+        },
+        select: {
+          id: true,
+          userId: true,
+          type: true,
+          title: true,
+          message: true,
+          entityType: true,
+          entityId: true,
+          createdAt: true,
+        },
+      }),
+    ),
+  );
+};
+
+export const submitCustomerPayment = async (customerUserId: string, body: unknown) => {
+  const input = customerPaymentSchema.parse(body);
+  const note = input.note?.trim();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const customer = await tx.user.findUnique({
+      where: { id: customerUserId },
+      select: { displayName: true },
+    });
+
+    let eventId = input.eventId ?? null;
+    let contractId = input.contractId ?? null;
+    let eventName = "";
+    let description = note ? `Thanh toán: ${note}` : "Thanh toán";
+    let outstanding = 0;
+
+    if (contractId) {
+      const contract = await tx.contract.findFirst({
+        where: {
+          id: contractId,
+          customerUserId,
+          status: { in: billableContractStatuses },
+        },
+        include: {
+          event: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+            },
+          },
+          transactions: {
+            where: { status: { in: payableTransactionStatuses } },
+            select: { amount: true, status: true },
+          },
+        },
+      });
+
+      if (!contract) throw createError("NOT_FOUND", "Payable contract not found", 404);
+      if (eventId && eventId !== contract.eventId) {
+        throw createError(
+          "RELATION_MISMATCH",
+          "Payment event must match the selected contract",
+          409,
+        );
+      }
+
+      eventId = contract.eventId;
+      contractId = contract.id;
+      eventName = contract.event.name || contract.event.type || "sự kiện";
+      description = note
+        ? `Thanh toán ${contract.contractCode}: ${note}`
+        : `Thanh toán ${contract.contractCode}`;
+      outstanding = payableAmounts(contract.totalValue, contract.transactions).outstanding;
+    } else if (eventId) {
+      const event = await tx.event.findFirst({
+        where: { id: eventId, customerUserId, status: { not: "cancelled" } },
+        include: {
+          transactions: {
+            where: { status: { in: payableTransactionStatuses } },
+            select: { amount: true, status: true },
+          },
+        },
+      });
+
+      if (!event) throw createError("NOT_FOUND", "Payable event not found", 404);
+      eventName = event.name || event.type || "sự kiện";
+      description = note ? `Thanh toán ${eventName}: ${note}` : `Thanh toán ${eventName}`;
+      outstanding = payableAmounts(event.budgetEstimated, event.transactions).outstanding;
+    }
+
+    if (!eventId) throw createError("VALIDATION_ERROR", "Event or contract is required", 400);
+    if (outstanding <= 0) {
+      throw createError("PAYMENT_NOT_AVAILABLE", "No payable amount remains", 409);
+    }
+    if (input.amount > outstanding) {
+      throw createError(
+        "PAYMENT_AMOUNT_EXCEEDED",
+        `Amount must not exceed the remaining payable amount (${money(outstanding)})`,
+        409,
+      );
+    }
+
+    const transaction = await tx.transaction.create({
+      data: {
+        eventId,
+        contractId,
+        description,
+        amount: input.amount,
+        transactionDate: new Date(),
+        paymentMethod: input.paymentMethod,
+        status: "pending",
+      },
+      include: customerTransactionInclude,
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId,
+        actorUserId: customerUserId,
+        iconName: "payment",
+        message: `Khách hàng đã gửi thanh toán ${money(input.amount)}, chờ xác nhận.`,
+      },
+    });
+
+    const notifications = await notifyAdminsAboutPayment(tx, {
+      transactionId: transaction.id,
+      eventName,
+      amount: input.amount,
+      customerName: customer?.displayName ?? "Khách hàng",
+    });
+
+    return { transaction, notifications };
+  });
+
+  for (const notification of result.notifications) {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
+    });
+  }
+
+  return result.transaction;
 };
 
 // ─── Reviews (customer view) ───────────────────────────────────────────────────────

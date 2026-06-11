@@ -15,6 +15,7 @@ import {
   getCustomerTransactions,
   getEventMilestones,
   sendChatMessage,
+  submitCustomerPayment,
   submitReview,
 } from "./customer.service";
 
@@ -87,6 +88,12 @@ customerRouter.get("/contracts/:id", async (req: Request, res: Response) => {
 customerRouter.get("/transactions", async (req: Request, res: Response) => {
   const data = await getCustomerTransactions(req.user!.userId);
   sendSuccess(res, { data });
+});
+
+// POST /api/customer/transactions
+customerRouter.post("/transactions", async (req: Request, res: Response) => {
+  const data = await submitCustomerPayment(req.user!.userId, req.body);
+  sendSuccess(res, { data, status: 201 });
 });
 
 // POST /api/customer/reviews

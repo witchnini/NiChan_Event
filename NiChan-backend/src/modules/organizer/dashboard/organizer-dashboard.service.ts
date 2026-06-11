@@ -1,5 +1,6 @@
 import { prisma } from "../../../lib/prisma";
 import { emitNotification } from "../../../lib/socket";
+import { createError } from "../../../middleware/errorHandler";
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ export const getOrganizerDashboard = async (organizerUserId: string) => {
       }),
       // unread notifications
       prisma.notification.findMany({
-        where: { userId: organizerUserId, isRead: false },
+        where: { userId: organizerUserId, scope: "organizer", isRead: false },
         orderBy: { createdAt: "desc" },
         take: 5,
       }),
@@ -59,6 +60,7 @@ export const getOrganizerNotifications = async (
 ) => {
   const where = {
     userId,
+    scope: "organizer",
     ...(filters.read !== undefined ? { isRead: filters.read === "true" } : {}),
     ...(filters.type ? { type: filters.type } : {}),
   };
@@ -77,10 +79,12 @@ export const getOrganizerNotifications = async (
 };
 
 export const markNotificationRead = async (id: string, userId: string) => {
-  return prisma.notification.update({
-    where: { id },
+  const result = await prisma.notification.updateMany({
+    where: { id, userId, scope: "organizer" },
     data: { isRead: true, readAt: new Date() },
   });
+  if (result.count === 0) throw createError("NOT_FOUND", "Notification not found", 404);
+  return { updated: true };
 };
 
 // ─── Send notification helper (reusable) ─────────────────────────────────────

@@ -43,7 +43,7 @@ const notifyAdminsOfProjectStaffChange = async (
           userId: admin.id,
           scope: "admin",
           type: "project_staff",
-          title: "Nhan su du an duoc cap nhat",
+          title: "Nhân sự dự án được cập nhật",
           message,
           entityType: "event",
           entityId: eventId,

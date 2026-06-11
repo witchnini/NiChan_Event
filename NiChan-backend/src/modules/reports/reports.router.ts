@@ -11,6 +11,8 @@ import {
   getAdminConversionReport,
   getAdminRevenueByType,
   getAdminTopEvents,
+  getAdminStaffPerformance,
+  getAdminReportsOverview,
 } from "./reports.service";
 
 // ─── Organizer Reports ────────────────────────────────────────────────────────
@@ -48,6 +50,11 @@ organizerReportsRouter.get("/reports/staff-performance", async (req: Request, re
 export const adminReportsRouter = Router();
 adminReportsRouter.use(authenticate, requireRole("admin"));
 
+adminReportsRouter.get("/reports/overview", async (_req: Request, res: Response) => {
+  const data = await getAdminReportsOverview();
+  sendSuccess(res, { data });
+});
+
 adminReportsRouter.get("/reports/conversion", async (_req: Request, res: Response) => {
   const data = await getAdminConversionReport();
   sendSuccess(res, { data });
@@ -60,5 +67,10 @@ adminReportsRouter.get("/reports/revenue-by-type", async (_req: Request, res: Re
 
 adminReportsRouter.get("/reports/top-events", async (_req: Request, res: Response) => {
   const data = await getAdminTopEvents();
+  sendSuccess(res, { data });
+});
+
+adminReportsRouter.get("/reports/staff-performance", async (_req: Request, res: Response) => {
+  const data = await getAdminStaffPerformance();
   sendSuccess(res, { data });
 });

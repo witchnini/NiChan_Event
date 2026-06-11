@@ -1,16 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye } from "lucide-react";
+import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import ChatAttachment from "@/components/ChatAttachment";
 import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";
 import { toast } from "sonner";
-import { getEventDisplayName, getEventStatusLabel, getMilestoneStatusLabel, getTransactionStatusLabel, eventStatusColors } from "@/lib/eventDisplay";
+import { getEventDisplayName, getEventStatusLabel, getTransactionStatusLabel, eventStatusColors } from "@/lib/eventDisplay";
+
+type EventContract = {
+  id: string;
+  contractCode: string;
+  status: string;
+  totalValue: string | number;
+  currentVersion?: string | null;
+  sentAt?: string | null;
+  signedAt?: string | null;
+  transactions?: { id: string; amount: string | number; status: string }[];
+  versions?: { paymentTerms?: string | null }[];
+};
 
 type EventDetail = {
   id: string;
@@ -24,12 +38,29 @@ type EventDetail = {
   organizerUser?: { displayName: string } | null;
   customerUser?: { displayName: string } | null;
   consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
+  contracts?: EventContract[];
 };
 
 type Milestone = { id: string; title: string; dueDate?: string | null; milestoneDate?: string | null; status: string; description?: string | null };
 type Message = { id: string; senderUserId: string; sender?: { displayName: string } | null; messageText: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; sentAt: string };
 type DocumentItem = { id: string; name?: string; fileName?: string; fileType?: string; createdAt: string; status?: string; contractId?: string | null; fileUrl?: string | null; event?: { id: string; name: string } };
-type Transaction = { id: string; description: string; amount: string | number; transactionDate: string; paymentMethod?: string | null; status: string; event?: { id: string } };
+type Transaction = {
+  id: string;
+  description: string;
+  amount: string | number;
+  transactionDate: string;
+  paymentMethod?: string | null;
+  status: string;
+  event?: { id: string };
+  contract?: { id: string; contractCode: string; totalValue: string | number; status: string } | null;
+};
+
+type PaymentForm = {
+  contractId: string;
+  amount: string;
+  paymentMethod: string;
+  note: string;
+};
 
 const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-1", title: "Xác nhận yêu cầu", description: "Yêu cầu đã được tiếp nhận và xác nhận", status: "pending" },
@@ -41,19 +72,30 @@ const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-7", title: "Ngày sự kiện", description: "Ngày diễn ra sự kiện chính thức", status: "pending" },
 ];
 
+const PAYMENT_METHODS = ["Chuyển khoản", "Tiền mặt", "Thẻ", "Ví điện tử"];
+const BILLABLE_CONTRACT_STATUSES = new Set(["sent", "active", "liquidated"]);
+
 const EventTracking = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [newMessage, setNewMessage] = useState("");
+  const [paymentForm, setPaymentForm] = useState<PaymentForm>({
+    contractId: "",
+    amount: "",
+    paymentMethod: PAYMENT_METHODS[0],
+    note: "",
+  });
   const [activeTab, setActiveTab] = useState<"timeline" | "chat" | "documents" | "payment">("timeline");
   const [loading, setLoading] = useState(true);
   const [attaching, setAttaching] = useState(false);
+  const [paying, setPaying] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -84,6 +126,13 @@ const EventTracking = () => {
     void load();
   }, [id]);
 
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "timeline" || tab === "chat" || tab === "documents" || tab === "payment") {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
   // Thêm tin nhắn vào danh sách, tránh trùng theo id (socket có thể gửi lại tin của chính mình)
   const appendMessage = (message: Message) => {
     setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
@@ -102,11 +151,69 @@ const EventTracking = () => {
     if (activeTab === "chat") messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeTab]);
 
+  const contractSummaries = useMemo(() => (event?.contracts ?? []).map((contract) => {
+    const completed = (contract.transactions ?? [])
+      .filter((tx) => tx.status === "completed")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const pending = (contract.transactions ?? [])
+      .filter((tx) => tx.status === "pending")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const totalValue = Number(contract.totalValue || 0);
+    return {
+      ...contract,
+      totalValue,
+      completed,
+      pending,
+      outstanding: Math.max(totalValue - completed - pending, 0),
+      payable: BILLABLE_CONTRACT_STATUSES.has(contract.status),
+    };
+  }), [event?.contracts]);
+
   const totals = useMemo(() => {
-    const paid = transactions.filter(tx => tx.status === "completed").reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const total = Number(event?.budgetEstimated || 0);
-    return { total, paid, remaining: Math.max(total - paid, 0) };
-  }, [event, transactions]);
+    const paid = transactions
+      .filter((tx) => tx.status === "completed")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const pending = transactions
+      .filter((tx) => tx.status === "pending")
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const contractTotal = contractSummaries.reduce((sum, contract) => sum + Number(contract.totalValue || 0), 0);
+    const total = contractTotal || Number(event?.budgetEstimated || 0);
+    return { total, paid, pending, remaining: Math.max(total - paid - pending, 0) };
+  }, [contractSummaries, event?.budgetEstimated, transactions]);
+
+  const selectedContract = useMemo(
+    () => contractSummaries.find((contract) => contract.id === paymentForm.contractId),
+    [contractSummaries, paymentForm.contractId],
+  );
+
+  const paymentLimit = selectedContract?.outstanding ?? totals.remaining;
+
+  useEffect(() => {
+    const contractIdFromQuery = searchParams.get("contractId");
+    setPaymentForm((current) => {
+      const currentContract = contractSummaries.find(
+        (contract) => contract.id === current.contractId && contract.payable && contract.outstanding > 0,
+      );
+      const queryContract = contractIdFromQuery
+        ? contractSummaries.find((contract) => contract.id === contractIdFromQuery)
+        : undefined;
+      const nextContract =
+        queryContract ??
+        currentContract ??
+        contractSummaries.find((contract) => contract.payable && contract.outstanding > 0);
+
+      if (!nextContract) {
+        return current.contractId ? { ...current, contractId: "" } : current;
+      }
+      if (current.contractId === nextContract.id) return current;
+
+      return {
+        ...current,
+        contractId: nextContract.id,
+        amount: nextContract.outstanding > 0 ? String(nextContract.outstanding) : current.amount,
+      };
+    });
+  }, [contractSummaries, searchParams]);
 
   const handleSendMessage = async () => {
     if (!id || !newMessage.trim()) return;
@@ -159,6 +266,54 @@ const EventTracking = () => {
 
   const handleDownload = (name: string) => {
     toast.success(`Đang tải "${name}"...`);
+  };
+
+  const selectPaymentContract = (contractId: string) => {
+    const contract = contractSummaries.find((item) => item.id === contractId);
+    setPaymentForm((current) => ({
+      ...current,
+      contractId,
+      amount: contract?.outstanding ? String(contract.outstanding) : current.amount,
+    }));
+  };
+
+  const handleSubmitPayment = async () => {
+    if (!id) return;
+    const amount = Number(paymentForm.amount);
+    if (!amount || amount <= 0) {
+      toast.error("Vui lòng nhập số tiền thanh toán hợp lệ");
+      return;
+    }
+    if (!paymentForm.paymentMethod.trim()) {
+      toast.error("Vui lòng chọn hình thức thanh toán");
+      return;
+    }
+    if (paymentLimit <= 0) {
+      toast.error("Không còn số tiền cần thanh toán");
+      return;
+    }
+    if (amount > paymentLimit) {
+      toast.error(`Số tiền không được vượt quá ${money(paymentLimit)}`);
+      return;
+    }
+
+    setPaying(true);
+    try {
+      await apiClient.post<Transaction>("/customer/transactions", {
+        eventId: id,
+        contractId: paymentForm.contractId || undefined,
+        amount,
+        paymentMethod: paymentForm.paymentMethod,
+        note: paymentForm.note.trim() || undefined,
+      });
+      toast.success("Đã gửi thanh toán, vui lòng chờ admin xác nhận");
+      setPaymentForm((current) => ({ ...current, note: "" }));
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gửi thanh toán thất bại");
+    } finally {
+      setPaying(false);
+    }
   };
 
   const money = (value: number) => value.toLocaleString("vi-VN") + "đ";
@@ -318,10 +473,11 @@ const EventTracking = () => {
         )}
 
         {activeTab === "payment" && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-3xl space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-5xl space-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Tổng giá trị</p><p className="font-serif text-headline-lg text-foreground mt-1">{money(totals.total)}</p></div>
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Đã thanh toán</p><p className="font-serif text-headline-lg text-secondary mt-1">{money(totals.paid)}</p></div>
+              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Chờ xác nhận</p><p className="font-serif text-headline-lg text-primary mt-1">{money(totals.pending)}</p></div>
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Còn lại</p><p className="font-serif text-headline-lg text-primary mt-1">{money(totals.remaining)}</p></div>
             </div>
             <div className="space-y-4">
@@ -333,6 +489,82 @@ const EventTracking = () => {
                 </div>
               ))}
               {transactions.length === 0 && <p className="font-body text-sm text-muted-foreground">Chưa có giao dịch cho sự kiện này.</p>}
+            </div>
+            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-surface-low flex items-center justify-center">
+                  <WalletCards size={18} className="text-primary" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-headline-md text-foreground">Gửi thanh toán</h3>
+                  <p className="font-body text-xs text-muted-foreground">Admin sẽ xác nhận sau khi đối soát.</p>
+                </div>
+              </div>
+
+              {contractSummaries.length > 0 && (
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Hợp đồng</label>
+                  <Select value={paymentForm.contractId || "none"} onValueChange={(value) => value !== "none" && selectPaymentContract(value)}>
+                    <SelectTrigger className="rounded-xl bg-surface-low border-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none" disabled>Không có hợp đồng cần thanh toán</SelectItem>
+                      {contractSummaries.map((contract) => (
+                        <SelectItem key={contract.id} value={contract.id} disabled={!contract.payable || contract.outstanding <= 0}>
+                          {contract.contractCode} - còn {money(contract.outstanding)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedContract?.versions?.[0]?.paymentTerms && (
+                    <p className="font-body text-xs text-muted-foreground mt-2">{selectedContract.versions[0].paymentTerms}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Số tiền *</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={paymentLimit || undefined}
+                    value={paymentForm.amount}
+                    onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))}
+                    className="rounded-xl bg-surface-low border-none font-body"
+                  />
+                  <p className="font-body text-xs text-muted-foreground mt-2">Có thể thanh toán: {money(paymentLimit)}</p>
+                </div>
+
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Hình thức *</label>
+                  <Select value={paymentForm.paymentMethod} onValueChange={(value) => setPaymentForm((current) => ({ ...current, paymentMethod: value }))}>
+                    <SelectTrigger className="rounded-xl bg-surface-low border-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_METHODS.map((method) => (
+                        <SelectItem key={method} value={method}>{method}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-body text-sm text-foreground mb-1 block">Ghi chú</label>
+                <Textarea
+                  value={paymentForm.note}
+                  onChange={(event) => setPaymentForm((current) => ({ ...current, note: event.target.value }))}
+                  placeholder="Mã giao dịch / nội dung chuyển khoản"
+                  className="rounded-xl bg-surface-low border-none font-body min-h-[92px]"
+                />
+              </div>
+
+              <Button variant="hero" className="w-full" onClick={handleSubmitPayment} disabled={paying || paymentLimit <= 0}>
+                <CreditCard size={16} /> {paying ? "Đang gửi..." : "Gửi thanh toán"}
+              </Button>
             </div>
           </motion.div>
         )}
