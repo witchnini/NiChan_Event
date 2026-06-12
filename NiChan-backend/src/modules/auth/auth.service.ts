@@ -7,6 +7,8 @@ import type { RegisterInput, LoginInput, ConsultationInput } from "./auth.schema
 
 const SALT_ROUNDS = 12;
 const PORTAL_ROLES = new Set(["admin", "organizer", "customer"]);
+const REQUEST_CODE_UNIQUE_VIOLATION = "P2002";
+const MAX_REQUEST_CODE_ATTEMPTS = 5;
 
 const buildAuthUser = (user: {
   id: string;
@@ -175,42 +177,89 @@ const notifyAdminsOfConsultationRequest = async (request: {
   );
 };
 
+const buildRequestCode = (year: number, sequence: number) =>
+  `YC-${year}-${String(sequence).padStart(3, "0")}`;
+
+const parseRequestCodeSequence = (requestCode: string, year: number): number => {
+  const match = requestCode.match(new RegExp(`^YC-${year}-(\\d+)$`));
+  return match ? Number.parseInt(match[1], 10) : 0;
+};
+
+const getNextRequestCodeSequence = async (year: number): Promise<number> => {
+  const prefix = `YC-${year}-`;
+  const requests = await prisma.consultationRequest.findMany({
+    where: { requestCode: { startsWith: prefix } },
+    select: { requestCode: true },
+  });
+
+  const maxSequence = requests.reduce(
+    (max, request) => Math.max(max, parseRequestCodeSequence(request.requestCode, year)),
+    0,
+  );
+
+  return maxSequence + 1;
+};
+
+const isRequestCodeUniqueViolation = (error: unknown): boolean => {
+  const prismaError = error as {
+    code?: string;
+    meta?: { target?: string[] | string };
+  };
+  const target = prismaError.meta?.target;
+
+  return (
+    prismaError.code === REQUEST_CODE_UNIQUE_VIOLATION &&
+    (target === "requestCode" || (Array.isArray(target) && target.includes("requestCode")))
+  );
+};
+
 export const createConsultationRequest = async (
   input: ConsultationInput,
   customerUserId?: string,
 ) => {
   // Generate request code: YC-YYYY-NNN
   const year = new Date().getFullYear();
-  const count = await prisma.consultationRequest.count({
-    where: { requestCode: { startsWith: `YC-${year}-` } },
-  });
-  const requestCode = `YC-${year}-${String(count + 1).padStart(3, "0")}`;
+  let sequence = await getNextRequestCodeSequence(year);
 
-  const request = await prisma.consultationRequest.create({
-    data: {
-      requestCode,
-      customerName: input.customerName,
-      phone: input.phone,
-      email: input.email,
-      eventType: input.eventType,
-      eventDate: input.eventDate ? new Date(input.eventDate) : null,
-      guestCount: input.guestCount ?? null,
-      budgetRange: input.budgetRange ?? null,
-      locationText: input.location ?? null,
-      note: input.note ?? null,
-      status: "new",
-      customerUserId: customerUserId ?? null,
-    },
-    select: { id: true, requestCode: true, status: true, customerName: true, eventType: true },
-  });
+  for (let attempt = 1; attempt <= MAX_REQUEST_CODE_ATTEMPTS; attempt += 1) {
+    const requestCode = buildRequestCode(year, sequence);
 
-  await notifyAdminsOfConsultationRequest(request).catch((error) => {
-    console.warn("[CONSULTATION_NOTIFICATION_FAILED]", error);
-  });
+    try {
+      const request = await prisma.consultationRequest.create({
+        data: {
+          requestCode,
+          customerName: input.customerName,
+          phone: input.phone,
+          email: input.email,
+          eventType: input.eventType,
+          eventDate: input.eventDate ? new Date(input.eventDate) : null,
+          guestCount: input.guestCount ?? null,
+          budgetRange: input.budgetRange ?? null,
+          locationText: input.location ?? null,
+          note: input.note ?? null,
+          status: "new",
+          customerUserId: customerUserId ?? null,
+        },
+        select: { id: true, requestCode: true, status: true, customerName: true, eventType: true },
+      });
 
-  return {
-    id: request.id,
-    requestCode: request.requestCode,
-    status: request.status,
-  };
+      await notifyAdminsOfConsultationRequest(request).catch((error) => {
+        console.warn("[CONSULTATION_NOTIFICATION_FAILED]", error);
+      });
+
+      return {
+        id: request.id,
+        requestCode: request.requestCode,
+        status: request.status,
+      };
+    } catch (error) {
+      if (!isRequestCodeUniqueViolation(error) || attempt === MAX_REQUEST_CODE_ATTEMPTS) {
+        throw error;
+      }
+
+      sequence = await getNextRequestCodeSequence(year);
+    }
+  }
+
+  throw createError("CONFLICT", "Could not generate a unique request code", 409);
 };
