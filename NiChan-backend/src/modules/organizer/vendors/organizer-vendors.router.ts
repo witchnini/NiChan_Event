@@ -7,6 +7,7 @@ import { sendSuccess } from "../../../utils/response";
 import {
   vendorSchema,
   vendorStatusSchema,
+  eventVendorSchema,
   listVendorCategories,
   listVendors,
   getVendorById,
@@ -87,7 +88,7 @@ organizerVendorsRouter.delete("/vendors/:id", async (req: Request, res: Response
 organizerVendorsRouter.get(
   "/projects/:projectId/vendors",
   async (req: Request, res: Response) => {
-    const data = await getEventVendors(p(req, "projectId"));
+    const data = await getEventVendors(p(req, "projectId"), req.user!.userId, req.user!.role);
     sendSuccess(res, { data });
   },
 );
@@ -95,9 +96,14 @@ organizerVendorsRouter.get(
 // POST /api/organizer/projects/:projectId/vendors
 organizerVendorsRouter.post(
   "/projects/:projectId/vendors",
+  validate(eventVendorSchema),
   async (req: Request, res: Response) => {
-    const { vendorId, serviceNote } = req.body as { vendorId: string; serviceNote?: string };
-    const data = await addEventVendor(p(req, "projectId"), vendorId, serviceNote);
+    const data = await addEventVendor(
+      p(req, "projectId"),
+      req.body,
+      req.user!.userId,
+      req.user!.role,
+    );
     sendSuccess(res, { data, status: 201 });
   },
 );
@@ -106,7 +112,7 @@ organizerVendorsRouter.post(
 organizerVendorsRouter.delete(
   "/projects/:projectId/vendors/:eventVendorId",
   async (req: Request, res: Response) => {
-    await removeEventVendor(p(req, "eventVendorId"));
+    await removeEventVendor(p(req, "eventVendorId"), req.user!.userId, req.user!.role);
     sendSuccess(res, { data: { deleted: true } });
   },
 );

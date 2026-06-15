@@ -19,7 +19,13 @@ export const vendorStatusSchema = z.object({
   status: z.enum(["active", "paused", "inactive"]),
 });
 
+export const eventVendorSchema = z.object({
+  vendorId: z.string().uuid(),
+  serviceNote: z.string().trim().max(500).optional(),
+});
+
 export type VendorInput = z.infer<typeof vendorSchema>;
+export type EventVendorInput = z.infer<typeof eventVendorSchema>;
 
 // ─── Vendor Categories ────────────────────────────────────────────────────────
 
@@ -146,21 +152,123 @@ export const deleteVendor = async (id: string) => {
 
 // ─── Event Vendors ────────────────────────────────────────────────────────────
 
-export const getEventVendors = async (eventId: string) =>
-  prisma.eventVendor.findMany({
-    where: { eventId },
-    include: { vendor: { include: { category: { select: { name: true } } } } },
+const getManagedEvent = async (eventId: string, actorUserId: string, actorRole: string) => {
+  const event = await prisma.event.findFirst({
+    where: {
+      id: eventId,
+      ...(actorRole === "organizer" ? { organizerUserId: actorUserId } : {}),
+    },
+    select: {
+      id: true,
+      name: true,
+      organizerUser: { select: { displayName: true } },
+    },
   });
+  if (!event) throw createError("NOT_FOUND", "Event not found or access denied", 404);
+  return event;
+};
 
-export const addEventVendor = async (eventId: string, vendorId: string, serviceNote?: string) => {
-  return prisma.eventVendor.create({
-    data: { eventId, vendorId, serviceNote, status: "active" },
-    include: { vendor: true },
+export const getEventVendors = async (eventId: string, actorUserId: string, actorRole: string) => {
+  await getManagedEvent(eventId, actorUserId, actorRole);
+
+  return prisma.eventVendor.findMany({
+    where: { eventId },
+    orderBy: { createdAt: "desc" },
+    include: { vendor: { include: { category: { select: { id: true, name: true } } } } },
   });
 };
 
-export const removeEventVendor = async (eventVendorId: string) => {
-  const existing = await prisma.eventVendor.findUnique({ where: { id: eventVendorId } });
+export const addEventVendor = async (
+  eventId: string,
+  input: EventVendorInput,
+  actorUserId: string,
+  actorRole: string,
+) => {
+  const event = await getManagedEvent(eventId, actorUserId, actorRole);
+
+  const vendor = await prisma.vendor.findFirst({
+    where: { id: input.vendorId, status: { not: "inactive" } },
+    select: { id: true, name: true },
+  });
+  if (!vendor) throw createError("NOT_FOUND", "Vendor not found or inactive", 404);
+
+  const existing = await prisma.eventVendor.findFirst({
+    where: { eventId, vendorId: input.vendorId },
+  });
+  if (existing) throw createError("CONFLICT", "Vendor already assigned to this project", 409);
+
+  return prisma.$transaction(async (tx) => {
+    const eventVendor = await tx.eventVendor.create({
+      data: {
+        eventId,
+        vendorId: input.vendorId,
+        serviceNote: input.serviceNote || null,
+        status: "active",
+      },
+      include: { vendor: { include: { category: { select: { id: true, name: true } } } } },
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId,
+        actorUserId,
+        iconName: "briefcase",
+        message: `${event.organizerUser?.displayName ?? "Organizer"} đã thêm nhà cung cấp ${vendor.name} vào dự án ${event.name}.`,
+      },
+    });
+
+    return eventVendor;
+  });
+};
+
+export const removeEventVendor = async (
+  eventVendorId: string,
+  actorUserId: string,
+  actorRole: string,
+) => {
+  const existing = await prisma.eventVendor.findUnique({
+    where: { id: eventVendorId },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          organizerUserId: true,
+          organizerUser: { select: { displayName: true } },
+        },
+      },
+      vendor: { select: { id: true, name: true } },
+    },
+  });
   if (!existing) throw createError("NOT_FOUND", "Event vendor not found", 404);
-  await prisma.eventVendor.delete({ where: { id: eventVendorId } });
+  if (actorRole === "organizer" && existing.event.organizerUserId !== actorUserId) {
+    throw createError("FORBIDDEN", "You do not manage this event", 403);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.eventVendor.delete({ where: { id: eventVendorId } });
+
+    const budgets = await tx.projectBudget.findMany({
+      where: { eventId: existing.event.id },
+      select: { id: true },
+    });
+    if (budgets.length > 0) {
+      await tx.budgetItem.updateMany({
+        where: {
+          projectBudgetId: { in: budgets.map((budget) => budget.id) },
+          vendorId: existing.vendor.id,
+        },
+        data: { vendorId: null },
+      });
+    }
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: existing.event.id,
+        actorUserId,
+        iconName: "briefcase",
+        message: `${existing.event.organizerUser?.displayName ?? "Organizer"} đã gỡ nhà cung cấp ${existing.vendor.name} khỏi dự án ${existing.event.name}.`,
+      },
+    });
+  });
 };

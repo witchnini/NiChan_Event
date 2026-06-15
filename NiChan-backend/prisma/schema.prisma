@@ -7,7 +7,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// NOTE: Switched to MySQL. Provider-specific annotations removed.
+// NOTE: PostgreSQL datasource. Provider-specific annotations removed.
 // See src/types/enums.ts for TypeScript enum constants.
 
 // ─── Identity & Access ───────────────────────────────────────────────────────

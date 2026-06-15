@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
+  Briefcase,
   Calendar,
   CheckCircle,
   ChevronRight,
@@ -118,6 +119,51 @@ type ProjectStaffResponse = {
   assignments: ProjectStaffAssignment[];
 };
 
+type VendorCategory = { id: string; name: string };
+
+type VendorOption = {
+  id: string;
+  name: string;
+  categoryId?: string;
+  category?: VendorCategory | null;
+  phone?: string | null;
+  email?: string | null;
+  contactName?: string | null;
+  address?: string | null;
+  status?: string | null;
+};
+
+type ProjectVendor = {
+  id: string;
+  eventId: string;
+  vendorId: string;
+  serviceNote?: string | null;
+  status: string;
+  createdAt: string;
+  vendor: VendorOption;
+};
+
+type BudgetItem = {
+  id: string;
+  category: string;
+  estimatedAmount: string | number;
+  actualAmount: string | number;
+  note?: string | null;
+  status: string;
+  vendorId?: string | null;
+  vendor?: { id: string; name: string } | null;
+};
+
+type ProjectBudget = {
+  project: { id: string; name: string };
+  budget: { id: string; name: string };
+  items: BudgetItem[];
+  estimatedTotal: number;
+  actualTotal: number;
+};
+
+type ProjectView = "overview" | "kanban" | "timeline" | "staff" | "vendors";
+
 type KanbanTask = {
   id: string;
   title: string;
@@ -175,6 +221,8 @@ const priorityLabel: Record<KanbanTask["priority"], string> = {
 
 const staffRoles = ["Event Manager", "Điều phối viên", "Thiết kế", "Lễ tân", "Âm thanh & ánh sáng", "MC"];
 const emptyCreateStaffForm = { name: "", email: "", phone: "", jobTitle: "", employmentStatus: "active" };
+const emptyVendorForm = { vendorId: "", serviceNote: "" };
+const NO_VENDOR = "none";
 const isValidPhone = (value: string) => !value || /^0[3-9]\d{8}$/.test(value);
 
 const taskStatusLabel: Record<string, string> = {
@@ -182,6 +230,20 @@ const taskStatusLabel: Record<string, string> = {
   in_progress: "Đang thực hiện",
   review: "Đang kiểm tra",
   done: "Hoàn thành",
+};
+
+const budgetStatusLabel: Record<string, string> = {
+  planned: "Dự kiến",
+  approved: "Đã duyệt",
+  committed: "Đã cam kết",
+  paid: "Đã thanh toán",
+};
+
+const budgetStatusBadge: Record<string, string> = {
+  planned: "bg-muted text-muted-foreground",
+  approved: "bg-primary/10 text-primary",
+  committed: "bg-amber-500/10 text-amber-600",
+  paid: "bg-secondary/10 text-secondary",
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -250,6 +312,9 @@ const formatDateTime = (value?: string | null) =>
       })
     : "Chưa cập nhật";
 
+const formatCurrency = (value?: string | number | null) =>
+  `${Number(value || 0).toLocaleString("vi-VN")} đ`;
+
 const toApiDateTime = (value: string) =>
   value ? new Date(`${value}T00:00:00`).toISOString() : undefined;
 
@@ -304,19 +369,24 @@ const OrganizerProjects = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [projectStaff, setProjectStaff] = useState<ProjectStaffAssignment[]>([]);
+  const [vendors, setVendors] = useState<VendorOption[]>([]);
+  const [projectVendors, setProjectVendors] = useState<ProjectVendor[]>([]);
+  const [projectBudget, setProjectBudget] = useState<ProjectBudget | null>(null);
   const [projectContracts, setProjectContracts] = useState<FullContract[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [kanban, setKanban] = useState<KanbanResponse | null>(null);
-  const [view, setView] = useState<"overview" | "kanban" | "timeline" | "staff">("kanban");
+  const [view, setView] = useState<ProjectView>("kanban");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [vendorDialogOpen, setVendorDialogOpen] = useState(false);
   const [staffDialogOpen, setStaffDialogOpen] = useState(false);
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
   const [targetStatus, setTargetStatus] = useState("todo");
   const [form, setForm] = useState(emptyForm);
+  const [vendorForm, setVendorForm] = useState(emptyVendorForm);
   const [staffForm, setStaffForm] = useState({ staffUserId: "", roleText: "" });
   const [createStaffForm, setCreateStaffForm] = useState(emptyCreateStaffForm);
   const [createStaffSaving, setCreateStaffSaving] = useState(false);
@@ -346,6 +416,31 @@ const OrganizerProjects = () => {
     const assignedIds = new Set(projectStaff.map((assignment) => assignment.staffUser.id));
     return staff.filter((person) => !assignedIds.has(person.id));
   }, [projectStaff, staff]);
+
+  const availableVendorsForProject = useMemo(() => {
+    const assignedIds = new Set(projectVendors.map((assignment) => assignment.vendorId));
+    return vendors.filter((vendor) => !assignedIds.has(vendor.id) && vendor.status !== "inactive");
+  }, [projectVendors, vendors]);
+
+  const projectVendorChoices = useMemo(
+    () => projectVendors.map((assignment) => assignment.vendor),
+    [projectVendors],
+  );
+
+  const budgetItems = useMemo(() => projectBudget?.items ?? [], [projectBudget]);
+
+  const vendorBudgetStats = useMemo(() => {
+    return budgetItems.reduce<Record<string, { count: number; estimated: number; actual: number }>>((acc, item) => {
+      if (!item.vendorId) return acc;
+      const current = acc[item.vendorId] ?? { count: 0, estimated: 0, actual: 0 };
+      acc[item.vendorId] = {
+        count: current.count + 1,
+        estimated: current.estimated + Number(item.estimatedAmount || 0),
+        actual: current.actual + Number(item.actualAmount || 0),
+      };
+      return acc;
+    }, {});
+  }, [budgetItems]);
 
   const filteredProjects = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -457,21 +552,27 @@ const OrganizerProjects = () => {
       setProjectDetail(null);
       setKanban(null);
       setProjectStaff([]);
+      setProjectVendors([]);
+      setProjectBudget(null);
       setProjectContracts([]);
       return;
     }
 
     setContextLoading(true);
     try {
-      const [detailData, kanbanData, staffData, contractsData] = await Promise.all([
+      const [detailData, kanbanData, staffData, vendorData, budgetData, contractsData] = await Promise.all([
         apiClient.get<ProjectDetail>(`/organizer/projects/${projectId}`),
         apiClient.get<KanbanResponse>(`/organizer/projects/${projectId}/kanban`),
         apiClient.get<ProjectStaffResponse>(`/organizer/staff/events/${projectId}`),
+        apiClient.get<ProjectVendor[]>(`/organizer/projects/${projectId}/vendors`),
+        apiClient.get<ProjectBudget>(`/organizer/budgets/${projectId}`),
         apiClient.get<FullContract[]>(`/organizer/projects/${projectId}/contracts`),
       ]);
       setProjectDetail(detailData);
       setKanban(kanbanData);
       setProjectStaff(staffData.assignments);
+      setProjectVendors(vendorData);
+      setProjectBudget(budgetData);
       setProjectContracts(contractsData);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Không tải được dự án");
@@ -495,13 +596,15 @@ const OrganizerProjects = () => {
       try {
         setLoading(true);
         setError(null);
-        const [projectData, staffData] = await Promise.all([
+        const [projectData, staffData, vendorData] = await Promise.all([
           apiClient.get<Project[]>("/organizer/projects"),
           apiClient.get<StaffOption[]>("/organizer/staff", { pageSize: 100 }),
+          apiClient.get<VendorOption[]>("/organizer/vendors", { pageSize: 100, status: "active" }),
         ]);
         if (cancelled) return;
         setProjects(projectData);
         setStaff(staffData);
+        setVendors(vendorData);
         const firstId = projectData[0]?.id ?? "";
         setSelectedProjectId(firstId);
         if (firstId) await loadProjectContext(firstId);
@@ -611,6 +714,70 @@ const OrganizerProjects = () => {
     }
   };
 
+  const openAssignVendor = () => {
+    setVendorForm({
+      vendorId: availableVendorsForProject[0]?.id ?? "",
+      serviceNote: "",
+    });
+    setVendorDialogOpen(true);
+  };
+
+  const assignProjectVendor = async () => {
+    if (!selectedProjectId || !vendorForm.vendorId) {
+      toast.error("Vui lòng chọn nhà cung cấp");
+      return;
+    }
+
+    try {
+      await apiClient.post(`/organizer/projects/${selectedProjectId}/vendors`, {
+        vendorId: vendorForm.vendorId,
+        serviceNote: vendorForm.serviceNote.trim() || undefined,
+      });
+      toast.success("Đã gắn nhà cung cấp vào dự án");
+      setVendorDialogOpen(false);
+      setVendorForm(emptyVendorForm);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể gắn nhà cung cấp");
+    }
+  };
+
+  const removeProjectVendor = async (assignment: ProjectVendor) => {
+    if (!selectedProjectId) return;
+
+    const assignedBudgetItems = budgetItems.filter((item) => item.vendorId === assignment.vendorId).length;
+    if (
+      assignedBudgetItems > 0 &&
+      !window.confirm(
+        `Gỡ ${assignment.vendor.name} khỏi dự án? ${assignedBudgetItems} hạng mục chi phí đang gắn với nhà cung cấp này sẽ được bỏ liên kết.`,
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await apiClient.del(`/organizer/projects/${selectedProjectId}/vendors/${assignment.id}`);
+      toast.success("Đã gỡ nhà cung cấp khỏi dự án");
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể gỡ nhà cung cấp");
+    }
+  };
+
+  const assignBudgetItemVendor = async (itemId: string, vendorId: string) => {
+    if (!selectedProjectId) return;
+
+    try {
+      await apiClient.put(`/organizer/budget-items/${itemId}`, {
+        vendorId: vendorId === NO_VENDOR ? null : vendorId,
+      });
+      toast.success("Đã cập nhật nhà cung cấp cho hạng mục");
+      await loadProjectContext(selectedProjectId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể cập nhật hạng mục");
+    }
+  };
+
   const openAssignStaff = () => {
     setStaffForm({ staffUserId: availableStaffForProject[0]?.id ?? "", roleText: "" });
     setStaffDialogOpen(true);
@@ -698,11 +865,12 @@ const OrganizerProjects = () => {
             { value: "overview", label: "Tổng quan" },
             { value: "kanban", label: "Kanban" },
             { value: "timeline", label: "Timeline" },
+            { value: "vendors", label: "Nhà cung cấp" },
             { value: "staff", label: "Nhân sự" },
           ].map((item) => (
             <button
               key={item.value}
-              onClick={() => setView(item.value as "overview" | "kanban" | "timeline" | "staff")}
+              onClick={() => setView(item.value as ProjectView)}
               className={`px-4 py-2 rounded-lg font-body text-sm transition-all ${
                 view === item.value
                   ? "bg-background shadow-ambient text-foreground font-semibold"
@@ -783,7 +951,7 @@ const OrganizerProjects = () => {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs font-body text-muted-foreground">
-                    <span>{project._count.tasks} công việc</span>
+                    <span>{project._count.tasks} công việc · {project._count.vendors ?? 0} NCC</span>
                     <span>{project.progressPercent}%</span>
                   </div>
                   <Progress value={project.progressPercent} className="h-2 mt-2 bg-surface-high" />
@@ -809,6 +977,7 @@ const OrganizerProjects = () => {
                     <span className="inline-flex items-center gap-1"><Calendar size={14} /> {formatDate(kanban.project.eventDate)}</span>
                     <span className="inline-flex items-center gap-1"><Users size={14} /> {kanban.project.guestCount ?? 0} khách</span>
                     <span className="inline-flex items-center gap-1"><UserRound size={14} /> {activeProjectCustomerName}</span>
+                    <span className="inline-flex items-center gap-1"><Briefcase size={14} /> {projectVendors.length} NCC</span>
                   </div>
                   <div className="flex items-center gap-3 mt-4">
                     <Progress value={kanban.project.progressPercent} className="h-2 max-w-sm bg-surface-high" />
@@ -1004,6 +1173,139 @@ const OrganizerProjects = () => {
             </div>
           )}
 
+          {view === "vendors" && (
+            <div className="space-y-5">
+              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h3 className="font-serif text-headline-md text-foreground">Nhà cung cấp dự án</h3>
+                    <p className="font-body text-sm text-muted-foreground">
+                      {projectVendors.length} nhà cung cấp đang được gắn vào dự án này
+                    </p>
+                  </div>
+                  <Button
+                    variant="hero"
+                    size="sm"
+                    onClick={openAssignVendor}
+                    disabled={availableVendorsForProject.length === 0}
+                  >
+                    <Plus size={14} /> Gắn NCC
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {projectVendors.map((assignment) => {
+                    const statsForVendor = vendorBudgetStats[assignment.vendorId] ?? { count: 0, estimated: 0, actual: 0 };
+
+                    return (
+                      <div key={assignment.id} className="rounded-xl border border-border p-4 bg-background">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-body text-sm font-semibold text-foreground truncate">
+                              {assignment.vendor.name}
+                            </p>
+                            <p className="font-body text-xs text-muted-foreground truncate">
+                              {assignment.vendor.category?.name || assignment.vendor.contactName || assignment.vendor.email || "-"}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => removeProjectVendor(assignment)}
+                            className="text-muted-foreground hover:text-destructive"
+                            title="Gỡ nhà cung cấp"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <div className="mt-3 space-y-1 font-body text-xs text-muted-foreground">
+                          <p>Phạm vi: <span className="text-foreground font-semibold">{assignment.serviceNote || "Chưa ghi chú"}</span></p>
+                          <p>Liên hệ: {assignment.vendor.phone || assignment.vendor.email || "-"}</p>
+                          <p>Hạng mục: {statsForVendor.count} · Dự toán {formatCurrency(statsForVendor.estimated)}</p>
+                          <p>Thực tế: {formatCurrency(statsForVendor.actual)}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {projectVendors.length === 0 && (
+                  <div className="rounded-xl bg-surface-low p-6 font-body text-sm text-muted-foreground">
+                    Chưa có nhà cung cấp nào trong dự án này.
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient overflow-hidden">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h3 className="font-serif text-headline-md text-foreground">Phân bổ hạng mục chi phí</h3>
+                    <p className="font-body text-sm text-muted-foreground">
+                      {budgetItems.length} hạng mục · Dự toán {formatCurrency(projectBudget?.estimatedTotal ?? 0)}
+                    </p>
+                  </div>
+                </div>
+
+                {budgetItems.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[760px] text-sm font-body">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left py-3 text-muted-foreground font-semibold">Hạng mục</th>
+                          <th className="text-right py-3 text-muted-foreground font-semibold">Dự toán</th>
+                          <th className="text-right py-3 text-muted-foreground font-semibold">Thực tế</th>
+                          <th className="text-left py-3 text-muted-foreground font-semibold pl-4">Trạng thái</th>
+                          <th className="text-left py-3 text-muted-foreground font-semibold pl-4">Nhà cung cấp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {budgetItems.map((item) => {
+                          const currentVendorOutsideProject =
+                            item.vendorId && !projectVendorChoices.some((vendor) => vendor.id === item.vendorId);
+
+                          return (
+                            <tr key={item.id} className="border-b border-border last:border-0 hover:bg-surface-low/50">
+                              <td className="py-3">
+                                <p className="font-semibold text-foreground">{item.category}</p>
+                                {item.note && <p className="text-xs text-muted-foreground mt-0.5">{item.note}</p>}
+                              </td>
+                              <td className="py-3 text-right text-foreground">{formatCurrency(item.estimatedAmount)}</td>
+                              <td className="py-3 text-right text-foreground">{formatCurrency(item.actualAmount)}</td>
+                              <td className="py-3 pl-4">
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-body font-semibold ${budgetStatusBadge[item.status] ?? "bg-muted text-muted-foreground"}`}>
+                                  {budgetStatusLabel[item.status] ?? item.status}
+                                </span>
+                              </td>
+                              <td className="py-3 pl-4">
+                                <select
+                                  value={item.vendorId ?? NO_VENDOR}
+                                  onChange={(event) => assignBudgetItemVendor(item.id, event.target.value)}
+                                  disabled={projectVendorChoices.length === 0}
+                                  className="w-full min-w-[220px] rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none disabled:opacity-60"
+                                  aria-label={`Nhà cung cấp cho ${item.category}`}
+                                >
+                                  <option value={NO_VENDOR}>Chưa gắn NCC</option>
+                                  {currentVendorOutsideProject && (
+                                    <option value={item.vendorId ?? ""}>
+                                      {item.vendor?.name ?? "NCC hiện tại"}
+                                    </option>
+                                  )}
+                                  {projectVendorChoices.map((vendor) => (
+                                    <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+                                  ))}
+                                </select>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="font-body text-sm text-muted-foreground">Chưa có hạng mục chi phí cho dự án này.</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {view === "staff" && (
             <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
@@ -1155,6 +1457,47 @@ const OrganizerProjects = () => {
           )}
         </div>
       </div>
+
+      <Dialog open={vendorDialogOpen} onOpenChange={setVendorDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Gắn nhà cung cấp vào dự án</DialogTitle>
+            <DialogDescription className="sr-only">
+              Biểu mẫu chọn nhà cung cấp cho dự án đang chọn.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="font-body text-sm text-foreground mb-1 block">Nhà cung cấp</label>
+              <select
+                value={vendorForm.vendorId}
+                onChange={(event) => setVendorForm((current) => ({ ...current, vendorId: event.target.value }))}
+                className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+              >
+                <option value="">Chọn nhà cung cấp</option>
+                {availableVendorsForProject.map((vendor) => (
+                  <option key={vendor.id} value={vendor.id}>
+                    {vendor.name} - {vendor.category?.name || vendor.phone || vendor.email || "NCC"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="font-body text-sm text-foreground mb-1 block">Phạm vi phụ trách</label>
+              <Input
+                value={vendorForm.serviceNote}
+                onChange={(event) => setVendorForm((current) => ({ ...current, serviceNote: event.target.value }))}
+                placeholder="VD: Âm thanh, sân khấu, hoa trang trí..."
+                className="rounded-xl border-none bg-surface-low"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVendorDialogOpen(false)}>Hủy</Button>
+            <Button variant="hero" onClick={assignProjectVendor} disabled={!vendorForm.vendorId}>Gắn NCC</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-lg">

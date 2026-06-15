@@ -465,7 +465,7 @@ const AdminReports = () => {
           animate={{ opacity: 1, y: 0 }}
           className="bg-surface-lowest rounded-xl p-6 shadow-ambient"
         >
-          <h3 className="font-serif text-headline-md text-foreground mb-6">Phễu yêu cầu</h3>
+          <h3 className="font-serif text-headline-md text-foreground mb-6">Trạng thái yêu cầu</h3>
           {requestStatusChart.length > 0 ? (
             <div className="space-y-4">
               {requestStatusChart.map((item) => {
@@ -560,7 +560,7 @@ const AdminReports = () => {
           animate={{ opacity: 1, y: 0 }}
           className="bg-surface-lowest rounded-xl p-6 shadow-ambient"
         >
-          <h3 className="font-serif text-headline-md text-foreground mb-6">Sức khỏe vận hành</h3>
+          <h3 className="font-serif text-headline-md text-foreground mb-6">Hiệu quả vận hành</h3>
           <div className="space-y-5">
             <div>
               <div className="flex items-center justify-between mb-2">

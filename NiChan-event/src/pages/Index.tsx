@@ -228,23 +228,25 @@ const Index = () => {
                   transition={{ delay: i * 0.15 }}
                   className="group"
                 >
-                  <div className="bg-surface-lowest rounded-xl overflow-hidden shadow-ambient hover:shadow-ambient-lg transition-shadow duration-500">
-                    <div className="aspect-[4/3] overflow-hidden">
-                      <img
-                        src={item.coverImageUrl || fallbackPortfolioImage}
-                        alt={item.title}
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                        loading="lazy"
-                      />
-                    </div>
-                    <div className="p-6">
-                      <span className="tracking-editorial text-label-md text-primary font-body text-xs">{item.category}</span>
-                      <h3 className="font-serif text-headline-md text-foreground mt-2 mb-2">{item.title}</h3>
-                      <div className="flex items-center gap-4 text-muted-foreground font-body text-sm">
-                        <span className="flex items-center gap-1"><Users size={14} /> {formatNumber(item.guestCount ?? 0)} khách</span>
+                  <Link to={appendRole(`/portfolio/${item.slug}`)} className="block h-full">
+                    <div className="h-full bg-surface-lowest rounded-xl overflow-hidden shadow-ambient hover:shadow-ambient-lg transition-shadow duration-500 cursor-pointer">
+                      <div className="aspect-[4/3] overflow-hidden">
+                        <img
+                          src={item.coverImageUrl || fallbackPortfolioImage}
+                          alt={item.title}
+                          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="p-6">
+                        <span className="tracking-editorial text-label-md text-primary font-body text-xs">{item.category}</span>
+                        <h3 className="font-serif text-headline-md text-foreground mt-2 mb-2">{item.title}</h3>
+                        <div className="flex items-center gap-4 text-muted-foreground font-body text-sm">
+                          <span className="flex items-center gap-1"><Users size={14} /> {formatNumber(item.guestCount ?? 0)} khách</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 </motion.div>
               ))}
             </div>
