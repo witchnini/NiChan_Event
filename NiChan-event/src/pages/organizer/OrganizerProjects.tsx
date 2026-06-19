@@ -302,16 +302,6 @@ const emptyForm: TaskFormState = {
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString("vi-VN") : "Chưa cập nhật";
 
-const formatDateTime = (value?: string | null) =>
-  value
-    ? new Date(value).toLocaleString("vi-VN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        day: "2-digit",
-        month: "2-digit",
-      })
-    : "Chưa cập nhật";
-
 const formatCurrency = (value?: string | number | null) =>
   `${Number(value || 0).toLocaleString("vi-VN")} đ`;
 
@@ -417,15 +407,15 @@ const OrganizerProjects = () => {
     return staff.filter((person) => !assignedIds.has(person.id));
   }, [projectStaff, staff]);
 
+  const assignableVendorChoices = useMemo(
+    () => vendors.filter((vendor) => vendor.status !== "inactive"),
+    [vendors],
+  );
+
   const availableVendorsForProject = useMemo(() => {
     const assignedIds = new Set(projectVendors.map((assignment) => assignment.vendorId));
-    return vendors.filter((vendor) => !assignedIds.has(vendor.id) && vendor.status !== "inactive");
-  }, [projectVendors, vendors]);
-
-  const projectVendorChoices = useMemo(
-    () => projectVendors.map((assignment) => assignment.vendor),
-    [projectVendors],
-  );
+    return assignableVendorChoices.filter((vendor) => !assignedIds.has(vendor.id));
+  }, [assignableVendorChoices, projectVendors]);
 
   const budgetItems = useMemo(() => projectBudget?.items ?? [], [projectBudget]);
 
@@ -599,7 +589,7 @@ const OrganizerProjects = () => {
         const [projectData, staffData, vendorData] = await Promise.all([
           apiClient.get<Project[]>("/organizer/projects"),
           apiClient.get<StaffOption[]>("/organizer/staff", { pageSize: 100 }),
-          apiClient.get<VendorOption[]>("/organizer/vendors", { pageSize: 100, status: "active" }),
+          apiClient.get<VendorOption[]>("/organizer/vendors", { pageSize: 100 }),
         ]);
         if (cancelled) return;
         setProjects(projectData);
@@ -1006,7 +996,7 @@ const OrganizerProjects = () => {
 
           {view === "overview" && projectDetail && (
             <div className="grid grid-cols-1 2xl:grid-cols-[1fr,360px] gap-5">
-              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+              <div className="2xl:col-span-2 bg-surface-lowest rounded-xl p-5 shadow-ambient">
                 <h3 className="font-serif text-headline-md text-foreground mb-4">Thông tin dự án</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-body text-sm">
                   <Info label="Khách hàng" value={projectDetail.customerUser.displayName} />
@@ -1022,21 +1012,6 @@ const OrganizerProjects = () => {
                   <Metric label="Mốc" value={projectDetail.milestones.length} />
                   <Metric label="Nhân sự" value={projectDetail._count.staffAssignments ?? 0} />
                   <Metric label="NCC" value={projectDetail._count.vendors ?? 0} />
-                </div>
-              </div>
-
-              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
-                <h3 className="font-serif text-headline-md text-foreground mb-4">Hoạt động gần đây</h3>
-                <div className="space-y-3">
-                  {projectDetail.activities.map((activity) => (
-                    <div key={activity.id} className="border-b border-border last:border-0 pb-3 last:pb-0">
-                      <p className="font-body text-sm text-foreground">{activity.message}</p>
-                      <p className="font-body text-xs text-muted-foreground mt-1">{formatDateTime(activity.createdAt)}</p>
-                    </div>
-                  ))}
-                  {projectDetail.activities.length === 0 && (
-                    <p className="font-body text-sm text-muted-foreground">Chưa có hoạt động.</p>
-                  )}
                 </div>
               </div>
 
@@ -1258,8 +1233,8 @@ const OrganizerProjects = () => {
                       </thead>
                       <tbody>
                         {budgetItems.map((item) => {
-                          const currentVendorOutsideProject =
-                            item.vendorId && !projectVendorChoices.some((vendor) => vendor.id === item.vendorId);
+                          const currentVendorOutsideChoices =
+                            item.vendorId && !assignableVendorChoices.some((vendor) => vendor.id === item.vendorId);
 
                           return (
                             <tr key={item.id} className="border-b border-border last:border-0 hover:bg-surface-low/50">
@@ -1278,17 +1253,17 @@ const OrganizerProjects = () => {
                                 <select
                                   value={item.vendorId ?? NO_VENDOR}
                                   onChange={(event) => assignBudgetItemVendor(item.id, event.target.value)}
-                                  disabled={projectVendorChoices.length === 0}
+                                  disabled={assignableVendorChoices.length === 0}
                                   className="w-full min-w-[220px] rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none disabled:opacity-60"
                                   aria-label={`Nhà cung cấp cho ${item.category}`}
                                 >
                                   <option value={NO_VENDOR}>Chưa gắn NCC</option>
-                                  {currentVendorOutsideProject && (
+                                  {currentVendorOutsideChoices && (
                                     <option value={item.vendorId ?? ""}>
                                       {item.vendor?.name ?? "NCC hiện tại"}
                                     </option>
                                   )}
-                                  {projectVendorChoices.map((vendor) => (
+                                  {assignableVendorChoices.map((vendor) => (
                                     <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
                                   ))}
                                 </select>
