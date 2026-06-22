@@ -395,7 +395,7 @@ const OrganizerProjects = () => {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null);
   const [kanban, setKanban] = useState<KanbanResponse | null>(null);
-  const [view, setView] = useState<ProjectView>("kanban");
+  const [view, setView] = useState<ProjectView>("overview");
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
