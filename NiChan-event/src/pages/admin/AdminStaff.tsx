@@ -2,8 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Briefcase,
-  Calendar,
-  Clock,
   Edit2,
   FolderKanban,
   Mail,
@@ -54,13 +52,6 @@ type Staff = {
     fullName?: string | null;
     address?: string | null;
   } | null;
-  shifts?: {
-    id: string;
-    workDate: string;
-    startTime: string;
-    endTime: string;
-    event?: { name: string } | null;
-  }[];
 };
 
 type Project = {
@@ -96,15 +87,6 @@ type ProjectStaffAssignment = {
 type ProjectStaffResponse = {
   event: { id: string; name: string };
   assignments: ProjectStaffAssignment[];
-};
-
-type ScheduleItem = {
-  id: string;
-  workDate: string;
-  startTime: string;
-  endTime: string;
-  staffUser: { displayName: string };
-  event?: { name: string } | null;
 };
 
 type StaffProjectTag = {
@@ -247,9 +229,7 @@ const AdminStaff = () => {
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [assignmentsByProject, setAssignmentsByProject] = useState<Record<string, ProjectStaffAssignment[]>>({});
-  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"list" | "schedule">("list");
   const [createOpen, setCreateOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [editItem, setEditItem] = useState<Staff | null>(null);
@@ -341,15 +321,6 @@ const AdminStaff = () => {
     }
   }, [search]);
 
-  const loadSchedule = useCallback(async () => {
-    try {
-      const data = await apiClient.get<ScheduleItem[]>("/admin/staff/schedule");
-      setSchedule(data);
-    } catch {
-      toast.error("Không tải được lịch làm việc");
-    }
-  }, []);
-
   const loadProjectContext = useCallback(async () => {
     setProjectLoading(true);
     try {
@@ -375,9 +346,8 @@ const AdminStaff = () => {
   }, [loadStaff]);
 
   useEffect(() => {
-    void loadSchedule();
     void loadProjectContext();
-  }, [loadProjectContext, loadSchedule]);
+  }, [loadProjectContext]);
 
   const openCreate = () => {
     setForm(emptyStaff);
@@ -522,7 +492,7 @@ const AdminStaff = () => {
       toast.success(`Đã xóa nhân sự ${staff.displayName}`);
       if (editItem?.id === staff.id) setEditItem(null);
       if (viewItem?.id === staff.id) setViewItem(null);
-      await Promise.all([loadStaff(), loadSchedule(), loadProjectContext()]);
+      await Promise.all([loadStaff(), loadProjectContext()]);
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Xóa nhân sự thất bại"));
     } finally {
@@ -717,29 +687,9 @@ const AdminStaff = () => {
             className="pl-10 rounded-xl bg-surface-lowest font-body border-none"
           />
         </div>
-
-        <div className="flex w-full gap-1 rounded-xl bg-surface-lowest p-1 shadow-ambient sm:w-auto">
-          <button
-            onClick={() => setTab("list")}
-            className={`flex-1 rounded-lg px-4 py-2 font-body text-sm transition-all sm:flex-none ${
-              tab === "list" ? "bg-background text-foreground shadow-ambient" : "text-muted-foreground"
-            }`}
-          >
-            Danh sách
-          </button>
-          <button
-            onClick={() => setTab("schedule")}
-            className={`flex-1 rounded-lg px-4 py-2 font-body text-sm transition-all sm:flex-none ${
-              tab === "schedule" ? "bg-background text-foreground shadow-ambient" : "text-muted-foreground"
-            }`}
-          >
-            Lịch làm việc
-          </button>
-        </div>
       </div>
 
-      {tab === "list" && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
           {staffList.map((person, index) => {
             const tags = staffProjectMap.get(person.id) ?? [];
             const currentTags = tags.filter(isCurrentProjectTag);
@@ -825,9 +775,6 @@ const AdminStaff = () => {
                   <p className="flex min-w-0 items-center gap-2">
                     <Mail size={13} className="shrink-0" /> <span className="truncate">{person.email}</span>
                   </p>
-                  <p className="flex items-center gap-2">
-                    <Calendar size={13} /> {person.shifts?.length ?? 0} ca gần đây
-                  </p>
                 </div>
 
                 <div className="mt-4 flex gap-2">
@@ -860,43 +807,7 @@ const AdminStaff = () => {
               </p>
             </div>
           )}
-        </div>
-      )}
-
-      {tab === "schedule" && (
-        <div className="space-y-3">
-          {schedule.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.03 }}
-              className="bg-surface-lowest rounded-xl p-5 shadow-ambient"
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="font-body font-semibold text-foreground flex items-center gap-2">
-                    <Calendar size={16} className="text-primary" />{" "}
-                    {new Date(item.workDate).toLocaleDateString("vi-VN")}
-                  </h3>
-                  <p className="font-body text-sm text-muted-foreground mt-1">
-                    {item.staffUser.displayName} - {item.event?.name ?? "Không gắn sự kiện"}
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-2 rounded-xl bg-surface-low px-3 py-2 text-sm font-body text-foreground">
-                  <Clock size={14} /> {item.startTime} - {item.endTime}
-                </span>
-              </div>
-            </motion.div>
-          ))}
-
-          {schedule.length === 0 && (
-            <div className="bg-surface-lowest rounded-xl p-8 shadow-ambient text-center">
-              <p className="font-body text-sm text-muted-foreground">Chưa có lịch làm việc.</p>
-            </div>
-          )}
-        </div>
-      )}
+      </div>
 
       <Dialog open={!!viewItem} onOpenChange={(open) => !open && setViewItem(null)}>
         <DialogContent className="sm:max-w-[560px] rounded-2xl border-foreground/30 bg-background p-6">

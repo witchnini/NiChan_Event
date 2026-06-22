@@ -11,7 +11,8 @@ import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 
 type Project = { id: string; name: string };
-type Vendor = { id: string; name: string };
+type Vendor = { id: string; name: string; status?: string | null };
+type ProjectVendor = { vendor: Vendor };
 type BudgetItem = {
   id: string;
   category: string;
@@ -67,16 +68,7 @@ const OrganizerBudget = () => {
         toast.error("Không tải được danh sách dự án");
       }
     };
-    const loadVendors = async () => {
-      try {
-        const data = await apiClient.get<Vendor[]>("/organizer/vendors", { pageSize: 100 });
-        setVendors(data);
-      } catch (error) {
-        toast.error("Không tải được danh sách nhà cung cấp");
-      }
-    };
     void loadProjects();
-    void loadVendors();
   }, []);
 
   const loadBudget = async (projectId: string) => {
@@ -87,8 +79,16 @@ const OrganizerBudget = () => {
     }
     setLoading(true);
     try {
-      const data = await apiClient.get<ProjectBudget>(`/organizer/budgets/${projectId}`);
-      setCurrent(data);
+      const [budgetData, projectVendorData] = await Promise.all([
+        apiClient.get<ProjectBudget>(`/organizer/budgets/${projectId}`),
+        apiClient.get<ProjectVendor[]>(`/organizer/projects/${projectId}/vendors`),
+      ]);
+      setCurrent(budgetData);
+      setVendors(
+        projectVendorData
+          .map((assignment) => assignment.vendor)
+          .filter((vendor) => vendor.status !== "inactive"),
+      );
     } catch (error) {
       toast.error("Không tải được ngân sách dự án");
     } finally {
@@ -129,6 +129,11 @@ const OrganizerBudget = () => {
     });
     setDialogOpen(true);
   };
+
+  const currentVendorOutsideChoices =
+    editItem?.vendorId && !vendors.some((vendor) => vendor.id === editItem.vendorId)
+      ? editItem.vendor
+      : null;
 
   const save = async () => {
     if (!current || !form.category.trim()) return;
@@ -303,6 +308,9 @@ const OrganizerBudget = () => {
                   <SelectTrigger className="rounded-xl"><SelectValue placeholder="Không liên kết" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NO_VENDOR}>Không liên kết</SelectItem>
+                    {currentVendorOutsideChoices && (
+                      <SelectItem value={currentVendorOutsideChoices.id}>{currentVendorOutsideChoices.name}</SelectItem>
+                    )}
                     {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                   </SelectContent>
                 </Select>

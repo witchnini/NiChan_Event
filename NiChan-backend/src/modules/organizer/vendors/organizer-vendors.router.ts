@@ -8,6 +8,7 @@ import {
   vendorSchema,
   vendorStatusSchema,
   eventVendorSchema,
+  eventVendorUpdateSchema,
   listVendorCategories,
   listVendors,
   getVendorById,
@@ -17,6 +18,7 @@ import {
   deleteVendor,
   getEventVendors,
   addEventVendor,
+  updateEventVendor,
   removeEventVendor,
 } from "./organizer-vendors.service";
 
@@ -105,6 +107,22 @@ organizerVendorsRouter.post(
       req.user!.role,
     );
     sendSuccess(res, { data, status: 201 });
+  },
+);
+
+// PUT /api/organizer/projects/:projectId/vendors/:eventVendorId
+organizerVendorsRouter.put(
+  "/projects/:projectId/vendors/:eventVendorId",
+  validate(eventVendorUpdateSchema),
+  async (req: Request, res: Response) => {
+    const data = await updateEventVendor(
+      p(req, "projectId"),
+      p(req, "eventVendorId"),
+      req.body,
+      req.user!.userId,
+      req.user!.role,
+    );
+    sendSuccess(res, { data });
   },
 );
 

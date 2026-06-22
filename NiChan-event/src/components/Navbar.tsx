@@ -107,6 +107,14 @@ const Navbar = () => {
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
       <div className="container mx-auto px-6 py-4 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2">
+          <img
+            src="/logo2.png"
+            alt=""
+            aria-hidden="true"
+            width={564}
+            height={442}
+            className="h-10 w-auto shrink-0 object-contain sm:h-11"
+          />
           <span className="font-serif text-headline-md text-primary font-bold">NiChan</span>
           <span className="font-serif text-headline-md text-foreground font-light">Events</span>
         </Link>

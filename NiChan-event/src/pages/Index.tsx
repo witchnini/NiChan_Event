@@ -13,6 +13,7 @@ import {
   getTestimonials,
   type PublicPortfolioItem,
   type PublicService,
+  type PublicStat,
   type PublicTestimonial,
 } from "@/services/api";
 
@@ -23,10 +24,17 @@ const formatNumber = (value: number | string) => {
 
 const fallbackPortfolioImage = heroImg;
 
+const defaultStats: PublicStat[] = [
+  { number: "500+", label: "Sự kiện thành công" },
+  { number: "12+", label: "Năm kinh nghiệm" },
+  { number: "98%", label: "Khách hàng hài lòng" },
+  { number: "50+", label: "Đối tác tin cậy" },
+];
+
 const Index = () => {
   const appendRole = useAppendRole();
   const [services, setServices] = useState<PublicService[]>([]);
-  const [stats, setStats] = useState<{ number: string; label: string }[]>([]);
+  const [stats, setStats] = useState<PublicStat[]>(defaultStats);
   const [testimonials, setTestimonials] = useState<PublicTestimonial[]>([]);
   const [portfolioItems, setPortfolioItems] = useState<PublicPortfolioItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +56,7 @@ const Index = () => {
 
         if (cancelled) return;
         setServices(servicesData.slice(0, 6));
-        setStats(statsData);
+        setStats(statsData.length > 0 ? statsData : defaultStats);
         setTestimonials(testimonialsData.slice(0, 3));
         setPortfolioItems(portfolioData.slice(0, 3));
       } catch (err) {

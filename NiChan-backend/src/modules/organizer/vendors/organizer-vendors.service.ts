@@ -24,8 +24,13 @@ export const eventVendorSchema = z.object({
   serviceNote: z.string().trim().max(500).optional(),
 });
 
+export const eventVendorUpdateSchema = z.object({
+  serviceNote: z.string().trim().max(500).optional().nullable(),
+});
+
 export type VendorInput = z.infer<typeof vendorSchema>;
 export type EventVendorInput = z.infer<typeof eventVendorSchema>;
+export type EventVendorUpdateInput = z.infer<typeof eventVendorUpdateSchema>;
 
 // ─── Vendor Categories ────────────────────────────────────────────────────────
 
@@ -218,6 +223,27 @@ export const addEventVendor = async (
     });
 
     return eventVendor;
+  });
+};
+
+export const updateEventVendor = async (
+  eventId: string,
+  eventVendorId: string,
+  input: EventVendorUpdateInput,
+  actorUserId: string,
+  actorRole: string,
+) => {
+  await getManagedEvent(eventId, actorUserId, actorRole);
+
+  const existing = await prisma.eventVendor.findFirst({
+    where: { id: eventVendorId, eventId },
+  });
+  if (!existing) throw createError("NOT_FOUND", "Event vendor not found", 404);
+
+  return prisma.eventVendor.update({
+    where: { id: eventVendorId },
+    data: { serviceNote: input.serviceNote || null },
+    include: { vendor: { include: { category: { select: { id: true, name: true } } } } },
   });
 };
 

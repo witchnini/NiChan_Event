@@ -16,6 +16,18 @@ export const budgetItemSchema = z.object({
 
 export type BudgetItemInput = z.infer<typeof budgetItemSchema>;
 
+const ensureVendorBelongsToProject = async (eventId: string, vendorId?: string | null) => {
+  if (!vendorId) return;
+
+  const assignment = await prisma.eventVendor.findFirst({
+    where: { eventId, vendorId },
+    select: { id: true },
+  });
+  if (!assignment) {
+    throw createError("BAD_REQUEST", "Vendor must be assigned to the project first", 400);
+  }
+};
+
 // ─── Budget ───────────────────────────────────────────────────────────────────
 
 export const getProjectBudget = async (projectId: string) => {
@@ -53,6 +65,7 @@ export const getProjectBudget = async (projectId: string) => {
 export const createBudgetItem = async (input: BudgetItemInput) => {
   const budget = await prisma.projectBudget.findUnique({ where: { id: input.projectBudgetId } });
   if (!budget) throw createError("NOT_FOUND", "Budget not found", 404);
+  await ensureVendorBelongsToProject(budget.eventId, input.vendorId);
 
   return prisma.budgetItem.create({
     data: {
@@ -69,8 +82,14 @@ export const createBudgetItem = async (input: BudgetItemInput) => {
 };
 
 export const updateBudgetItem = async (id: string, input: Partial<BudgetItemInput>) => {
-  const existing = await prisma.budgetItem.findUnique({ where: { id } });
+  const existing = await prisma.budgetItem.findUnique({
+    where: { id },
+    include: { projectBudget: { select: { eventId: true } } },
+  });
   if (!existing) throw createError("NOT_FOUND", "Budget item not found", 404);
+  if (input.vendorId !== undefined) {
+    await ensureVendorBelongsToProject(existing.projectBudget.eventId, input.vendorId);
+  }
 
   return prisma.budgetItem.update({
     where: { id },

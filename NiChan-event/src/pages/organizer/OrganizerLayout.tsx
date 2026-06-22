@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  LayoutDashboard, FolderKanban, MessageSquare, Building2, Wallet, FileBarChart,
+  LayoutDashboard, FolderKanban, MessageSquare, Wallet, FileBarChart,
   Globe, LogOut, Menu, X, ChevronLeft, Bell,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,7 +14,6 @@ const sidebarItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/ban-to-chuc" },
   { label: "Quản lý dự án", icon: FolderKanban, path: "/ban-to-chuc/du-an" },
   { label: "Trao đổi", icon: MessageSquare, path: "/ban-to-chuc/trao-doi" },
-  { label: "Nhà cung cấp", icon: Building2, path: "/ban-to-chuc/nha-cung-cap" },
   { label: "Ngân sách", icon: Wallet, path: "/ban-to-chuc/ngan-sach" },
   { label: "Báo cáo & Tổng kết", icon: FileBarChart, path: "/ban-to-chuc/bao-cao" },
   { label: "Thông báo", icon: Bell, path: "/ban-to-chuc/thong-bao" },
