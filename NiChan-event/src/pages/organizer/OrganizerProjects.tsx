@@ -14,7 +14,6 @@ import {
   Plus,
   Search,
   Trash2,
-  UserPlus,
   UserRound,
   Users,
 } from "lucide-react";
@@ -96,7 +95,12 @@ type StaffOption = {
   displayName: string;
   email?: string | null;
   phone?: string | null;
-  staffProfile?: { jobTitle?: string | null } | null;
+  avatarUrl?: string | null;
+  staffProfile?: {
+    fullName?: string | null;
+    jobTitle?: string | null;
+    employmentStatus?: string | null;
+  } | null;
 };
 
 type ProjectStaffAssignment = {
@@ -264,6 +268,12 @@ const vendorStatusLabel: Record<string, string> = {
   inactive: "Ngừng hợp tác",
 };
 
+const staffAssignmentStatusLabel: Record<string, string> = {
+  invited: "Đã mời",
+  confirmed: "Đã xác nhận",
+  declined: "Từ chối",
+};
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 const MIN_GANTT_WEEKS = 10;
@@ -393,6 +403,7 @@ const OrganizerProjects = () => {
   const [vendorListOpen, setVendorListOpen] = useState(false);
   const [vendorEditorOpen, setVendorEditorOpen] = useState(false);
   const [staffDialogOpen, setStaffDialogOpen] = useState(false);
+  const [staffListOpen, setStaffListOpen] = useState(false);
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
   const [targetStatus, setTargetStatus] = useState("todo");
@@ -402,7 +413,9 @@ const OrganizerProjects = () => {
   const [vendorEditorForm, setVendorEditorForm] = useState(emptyVendorEditorForm);
   const [editingProjectVendor, setEditingProjectVendor] = useState<ProjectVendor | null>(null);
   const [vendorSaving, setVendorSaving] = useState(false);
-  const [staffForm, setStaffForm] = useState({ staffUserId: "", roleText: "" });
+  const [staffForm, setStaffForm] = useState({ staffUserId: "", roleText: "", status: "invited" });
+  const [editingStaffAssignment, setEditingStaffAssignment] = useState<ProjectStaffAssignment | null>(null);
+  const [staffSearch, setStaffSearch] = useState("");
   const [createStaffForm, setCreateStaffForm] = useState(emptyCreateStaffForm);
   const [createStaffSaving, setCreateStaffSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -431,6 +444,16 @@ const OrganizerProjects = () => {
     const assignedIds = new Set(projectStaff.map((assignment) => assignment.staffUser.id));
     return staff.filter((person) => !assignedIds.has(person.id));
   }, [projectStaff, staff]);
+
+  const filteredStaffCatalog = useMemo(() => {
+    const keyword = staffSearch.trim().toLowerCase();
+    if (!keyword) return staff;
+
+    return staff.filter((person) =>
+      [person.displayName, person.staffProfile?.fullName, person.staffProfile?.jobTitle, person.email, person.phone]
+        .some((value) => value?.toLowerCase().includes(keyword)),
+    );
+  }, [staff, staffSearch]);
 
   const assignableVendorChoices = useMemo(
     () => vendors.filter((vendor) => vendor.status !== "inactive"),
@@ -748,14 +771,6 @@ const OrganizerProjects = () => {
     }
   };
 
-  const openAssignVendor = () => {
-    setVendorForm({
-      vendorId: availableVendorsForProject[0]?.id ?? "",
-      serviceNote: "",
-    });
-    setVendorDialogOpen(true);
-  };
-
   const openAssignVendorFromList = (vendorId: string) => {
     setVendorForm({ vendorId, serviceNote: "" });
     setVendorListOpen(false);
@@ -899,27 +914,52 @@ const OrganizerProjects = () => {
     }
   };
 
-  const openAssignStaff = () => {
-    setStaffForm({ staffUserId: availableStaffForProject[0]?.id ?? "", roleText: "" });
+  const openAssignStaffFromList = (person: StaffOption) => {
+    setEditingStaffAssignment(null);
+    setStaffForm({
+      staffUserId: person.id,
+      roleText: person.staffProfile?.jobTitle ?? "",
+      status: "invited",
+    });
+    setStaffListOpen(false);
     setStaffDialogOpen(true);
   };
 
-  const assignProjectStaff = async () => {
+  const openEditProjectStaff = (assignment: ProjectStaffAssignment) => {
+    setEditingStaffAssignment(assignment);
+    setStaffForm({
+      staffUserId: assignment.staffUser.id,
+      roleText: assignment.roleText,
+      status: assignment.status,
+    });
+    setStaffDialogOpen(true);
+  };
+
+  const saveProjectStaff = async () => {
     if (!selectedProjectId || !staffForm.staffUserId || !staffForm.roleText.trim()) {
       toast.error("Vui lòng chọn nhân sự và nhập vai trò trong dự án");
       return;
     }
 
     try {
-      await apiClient.post(`/organizer/staff/events/${selectedProjectId}`, {
-        staffUserId: staffForm.staffUserId,
-        roleText: staffForm.roleText.trim(),
-      });
-      toast.success("Đã thêm nhân sự vào dự án");
+      if (editingStaffAssignment) {
+        await apiClient.patch(`/organizer/staff/assignments/${editingStaffAssignment.id}`, {
+          roleText: staffForm.roleText.trim(),
+          status: staffForm.status,
+        });
+        toast.success("Đã cập nhật phân công nhân sự");
+      } else {
+        await apiClient.post(`/organizer/staff/events/${selectedProjectId}`, {
+          staffUserId: staffForm.staffUserId,
+          roleText: staffForm.roleText.trim(),
+        });
+        toast.success("Đã thêm nhân sự vào dự án");
+      }
       setStaffDialogOpen(false);
+      setEditingStaffAssignment(null);
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không thể thêm nhân sự");
+      toast.error(err instanceof Error ? err.message : "Không thể lưu phân công nhân sự");
     }
   };
 
@@ -959,9 +999,11 @@ const OrganizerProjects = () => {
     }
   };
 
-  const removeProjectStaff = async (assignmentId: string) => {
+  const removeProjectStaff = async (assignment: ProjectStaffAssignment) => {
+    if (!window.confirm(`Gỡ ${assignment.staffUser.displayName} khỏi dự án?`)) return;
+
     try {
-      await apiClient.del(`/organizer/staff/assignments/${assignmentId}`);
+      await apiClient.del(`/organizer/staff/assignments/${assignment.id}`);
       toast.success("Đã gỡ nhân sự khỏi dự án");
       await refresh();
     } catch (err) {
@@ -1301,15 +1343,6 @@ const OrganizerProjects = () => {
                     >
                       <Eye size={14} /> Xem tất cả NCC
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-xl"
-                      onClick={openAssignVendor}
-                      disabled={availableVendorsForProject.length === 0}
-                    >
-                      <Briefcase size={14} /> Gắn NCC có sẵn
-                    </Button>
                     <Button variant="hero" size="sm" onClick={openCreateVendor}>
                       <Plus size={14} /> Thêm NCC mới
                     </Button>
@@ -1452,10 +1485,12 @@ const OrganizerProjects = () => {
                     variant="outline"
                     size="sm"
                     className="rounded-xl"
-                    onClick={openAssignStaff}
-                    disabled={availableStaffForProject.length === 0}
+                    onClick={() => {
+                      setStaffSearch("");
+                      setStaffListOpen(true);
+                    }}
                   >
-                    <UserPlus size={14} /> Phân công vào dự án
+                    <Eye size={14} /> Xem tất cả nhân sự
                   </Button>
                   <Button
                     variant="hero"
@@ -1479,17 +1514,26 @@ const OrganizerProjects = () => {
                           {assignment.staffUser.staffProfile?.jobTitle || assignment.staffUser.email || "-"}
                         </p>
                       </div>
-                      <button
-                        onClick={() => removeProjectStaff(assignment.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                        title="Gỡ nhân sự"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => openEditProjectStaff(assignment)}
+                          className="text-muted-foreground hover:text-primary"
+                          title="Sửa phân công"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => removeProjectStaff(assignment)}
+                          className="text-muted-foreground hover:text-destructive"
+                          title="Gỡ nhân sự"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                     <div className="mt-3 space-y-1 font-body text-xs text-muted-foreground">
                       <p>Vai trò: <span className="text-foreground font-semibold">{assignment.roleText}</span></p>
-                      <p>Trạng thái: {assignment.status}</p>
+                      <p>Trạng thái: {staffAssignmentStatusLabel[assignment.status] ?? assignment.status}</p>
                       <p>Liên hệ: {assignment.staffUser.phone || assignment.staffUser.email || "-"}</p>
                     </div>
                   </div>
@@ -1964,29 +2008,123 @@ const OrganizerProjects = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={staffDialogOpen} onOpenChange={setStaffDialogOpen}>
+      <Dialog open={staffListOpen} onOpenChange={setStaffListOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Tất cả nhân sự</DialogTitle>
+            <DialogDescription>
+              Xem và chọn nhân sự để phân công vào dự án đang mở.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={staffSearch}
+              onChange={(event) => setStaffSearch(event.target.value)}
+              placeholder="Tìm theo tên, vai trò hoặc liên hệ..."
+              className="pl-9 rounded-xl border-none bg-surface-low"
+            />
+          </div>
+
+          <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+            {filteredStaffCatalog.map((person) => {
+              const assigned = projectStaff.some((assignment) => assignment.staffUser.id === person.id);
+
+              return (
+                <div
+                  key={person.id}
+                  className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-primary">
+                      {person.avatarUrl ? (
+                        <img src={person.avatarUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <UserRound size={18} />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-body text-sm font-semibold text-foreground">
+                          {person.staffProfile?.fullName || person.displayName}
+                        </p>
+                        <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-secondary">
+                          Đang làm việc
+                        </span>
+                      </div>
+                      <p className="mt-1 font-body text-xs text-muted-foreground">
+                        {person.staffProfile?.jobTitle || "Chưa có vai trò"} · {person.phone || person.email || "Chưa có liên hệ"}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant={assigned ? "outline" : "hero"}
+                    size="sm"
+                    className="shrink-0 rounded-xl"
+                    disabled={assigned}
+                    onClick={() => openAssignStaffFromList(person)}
+                  >
+                    {assigned ? "Đã phân công" : "Chọn nhân sự"}
+                  </Button>
+                </div>
+              );
+            })}
+
+            {filteredStaffCatalog.length === 0 && (
+              <div className="rounded-xl bg-surface-low p-6 text-center font-body text-sm text-muted-foreground">
+                Không tìm thấy nhân sự phù hợp.
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStaffListOpen(false)}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={staffDialogOpen}
+        onOpenChange={(open) => {
+          setStaffDialogOpen(open);
+          if (!open) setEditingStaffAssignment(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-serif">Thêm nhân sự đã tạo vào dự án</DialogTitle>
+            <DialogTitle className="font-serif">
+              {editingStaffAssignment ? "Sửa phân công nhân sự" : "Phân công nhân sự vào dự án"}
+            </DialogTitle>
             <DialogDescription className="sr-only">
-              Biểu mẫu thêm nhân sự đã tạo vào dự án đang chọn.
+              {editingStaffAssignment
+                ? "Biểu mẫu cập nhật vai trò và trạng thái phân công."
+                : "Biểu mẫu thêm nhân sự đã tạo vào dự án đang chọn."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="font-body text-sm text-foreground mb-1 block">Nhân sự</label>
-              <select
-                value={staffForm.staffUserId}
-                onChange={(event) => setStaffForm((current) => ({ ...current, staffUserId: event.target.value }))}
-                className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
-              >
-                <option value="">Chọn nhân sự</option>
-                {availableStaffForProject.map((person) => (
-                  <option key={person.id} value={person.id}>
-                    {person.displayName} - {person.staffProfile?.jobTitle || person.email || "Nhân sự"}
-                  </option>
-                ))}
-              </select>
+              {editingStaffAssignment ? (
+                <Input
+                  value={editingStaffAssignment.staffUser.displayName}
+                  disabled
+                  className="rounded-xl border-none bg-surface-low"
+                />
+              ) : (
+                <select
+                  value={staffForm.staffUserId}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, staffUserId: event.target.value }))}
+                  className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+                >
+                  <option value="">Chọn nhân sự</option>
+                  {availableStaffForProject.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.displayName} - {person.staffProfile?.jobTitle || person.email || "Nhân sự"}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="font-body text-sm text-foreground mb-1 block">Vai trò trong dự án</label>
@@ -1997,10 +2135,26 @@ const OrganizerProjects = () => {
                 className="rounded-xl border-none bg-surface-low"
               />
             </div>
+            {editingStaffAssignment && (
+              <div>
+                <label className="font-body text-sm text-foreground mb-1 block">Trạng thái phân công</label>
+                <select
+                  value={staffForm.status}
+                  onChange={(event) => setStaffForm((current) => ({ ...current, status: event.target.value }))}
+                  className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+                >
+                  {Object.entries(staffAssignmentStatusLabel).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setStaffDialogOpen(false)}>Hủy</Button>
-            <Button variant="hero" onClick={assignProjectStaff}>Thêm</Button>
+            <Button variant="hero" onClick={saveProjectStaff}>
+              {editingStaffAssignment ? "Cập nhật" : "Phân công"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
