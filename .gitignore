@@ -34,6 +34,7 @@ uploads/
 # Local automation/tool artifacts
 .codex/
 .playwright-mcp/
+.prewarm
 *.timestamp-*.mjs
 
 # Workspace lockfiles from the old split-repo setup.

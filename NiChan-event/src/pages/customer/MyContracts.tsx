@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { FileText, Eye, CheckCircle, Download, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 import { getContractStatusLabel, getEventDisplayName } from "@/lib/eventDisplay";

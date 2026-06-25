@@ -4,7 +4,7 @@ import { useAppendRole } from "@/hooks/useAppendRole";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { ArrowRight, Star, Users, ChevronRight } from "lucide-react";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import heroImg from "@/assets/hero-wedding.jpg";
 import {
   getPortfolioItems,

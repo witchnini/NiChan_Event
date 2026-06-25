@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Calendar, MapPin, Users, ArrowRight, UserRound } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 import { getEventDisplayName, getEventStatusLabel, eventStatusFilters, eventStatusColors } from "@/lib/eventDisplay";

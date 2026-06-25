@@ -33,8 +33,8 @@ import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { eventStatusLabels, eventStatusColors, eventStatusFilters, getEventStatusLabel } from "@/lib/eventDisplay";
-import ContractPdfButton from "@/components/ContractPdfButton";
-import { type FullContract } from "@/components/ContractDocument";
+import ContractPdfButton from "@/components/features/contracts/ContractPdfButton";
+import { type FullContract } from "@/components/features/contracts/ContractDocument";
 
 type Project = {
   id: string;

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import ContractPdfButton from "@/components/ContractPdfButton";
+import ContractPdfButton from "@/components/features/contracts/ContractPdfButton";
 
 type ContractVersion = {
   id: string;

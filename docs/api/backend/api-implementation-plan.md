@@ -3,7 +3,7 @@
 ## Documents
 
 - Execution plan: this file
-- API contract: `API_SPECIFICATION.md`
+- API contract: `api-specification.md`
 - Database design: `DATABASE_DESIGN.md`
 
 ## Rule

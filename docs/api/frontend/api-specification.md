@@ -309,6 +309,6 @@ Contract create body:
 
 ## Important note
 
-`API_IMPLEMENTATION_PLAN.md` is for module order and progress.
+`api-implementation-plan.md` is for module order and progress.
 This file is for request/response/error contract.
 Backend should not implement a module if both docs are still missing details.

@@ -4,16 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NiChan is a Vietnamese event management platform (wedding/event planning SaaS). Two independent subprojects — a React frontend and a Node.js backend — live side by side with no monorepo tooling.
+NiChan is a Vietnamese event management platform (wedding/event planning SaaS). The repo uses npm workspaces with Turborepo to run the React frontend and Node.js backend side by side.
 
 ## Repository Structure
 
 ```
-NiChan-backend/   # Express + Prisma API server (Node ≥22, TypeScript)
+docs/             # Project docs, API specs, database design, SRS, backlog
+NiChan-backend/   # Express + Prisma API server (Node >=22, TypeScript)
 NiChan-event/     # React + Vite frontend (TypeScript, Tailwind, shadcn/ui)
+tests/            # Repo-level manual/E2E test cases
 ```
 
-Each has its own `node_modules` and lock files. No root `package.json`.
+The root `package.json` defines workspaces for `NiChan-event` and `NiChan-backend`; each app also keeps its own package scripts.
 
 ## Development Commands
 
@@ -44,10 +46,10 @@ npm run db:seed          # Seed database
 
 ### Frontend
 
-- **Entry:** `src/main.tsx` → `App.tsx` with React Router v6
-- **Path alias:** `@/` → `./src/`
+- **Entry:** `src/main.tsx` -> `App.tsx` with React Router v6
+- **Path alias:** `@/` -> `./src/`
 - **Auth:** JWT in localStorage (`nichan_token` / `nichan_user`), verified via `GET /api/auth/me`. Three roles: `admin`, `organizer`, `customer`
-- **API client:** `src/services/apiClient.ts` — fetch wrapper, auto-attaches Bearer token
+- **API client:** `src/services/apiClient.ts` - fetch wrapper, auto-attaches Bearer token
 - **UI:** shadcn/ui (Radix primitives) + Tailwind with custom design tokens
 - **State:** TanStack Query v5 for server state, React Context for auth
 - **Routes use Vietnamese slugs:** `/dich-vu`, `/dang-nhap`, `/ban-to-chuc/*`, `/admin/*`, etc.
@@ -55,12 +57,12 @@ npm run db:seed          # Seed database
 
 ### Backend
 
-- **Entry:** `src/server.ts` — Express + HTTP server + Socket.IO
+- **Entry:** `src/server.ts` - Express + HTTP server + Socket.IO
 - **Module-based routing:** `src/modules/{auth,public,customer,organizer,admin,shared,reports}/`
 - **Database:** PostgreSQL via Prisma 6. Schema at `prisma/schema.prisma`
 - **Real-time:** Socket.IO with JWT auth, rooms per chat thread (`thread:<id>`)
-- **Middleware:** `src/middleware/` — auth (JWT verify + role guard), Zod validation, error handler
-- **File uploads:** Multer → Cloudinary
+- **Middleware:** `src/middleware/` - auth (JWT verify + role guard), Zod validation, error handler
+- **File uploads:** Multer -> Cloudinary
 - **Env vars required:** `DATABASE_URL`, `JWT_SECRET`, `CLOUDINARY_*` credentials
 
 ### Communication Between Services
@@ -77,4 +79,4 @@ The frontend Vite config proxies `/api` requests to the backend at `localhost:30
 - Vietnamese language used in UI text, route slugs, and some documentation
 - Zod used for validation on both frontend (forms) and backend (request bodies)
 - Backend modules follow pattern: `router.ts` defines routes, handlers call Prisma directly or through service functions
-- Frontend pages live in `src/pages/`, reusable UI in `src/components/ui/`
+- Frontend pages live in `src/pages/`, layouts in `src/layouts/`, base UI in `src/components/ui/`, layout chrome in `src/components/layout/`, and business components in `src/components/features/`

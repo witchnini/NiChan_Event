@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Users, Calendar } from "lucide-react";
 import { useAppendRole } from "@/hooks/useAppendRole";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import heroImg from "@/assets/hero-wedding.jpg";
 import { getPortfolioItems, type PublicPortfolioItem } from "@/services/api";
 

@@ -29,7 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { RichTextEditor } from "@/components/admin/RichTextEditor";
+import { RichTextEditor } from "@/components/features/admin/RichTextEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Calendar, Clock } from "lucide-react";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import heroImg from "@/assets/hero-wedding.jpg";
 import { getBlogPosts, type PublicBlogPost } from "@/services/api";
 

@@ -4,8 +4,8 @@ import { Calendar, Download, Eye, FileText, MessageSquare, Paperclip, Search, Se
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import ChatAttachment from "@/components/ChatAttachment";
-import ContractPdfButton from "@/components/ContractPdfButton";
+import ChatAttachment from "@/components/features/chat/ChatAttachment";
+import ContractPdfButton from "@/components/features/contracts/ContractPdfButton";
 import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";

@@ -4,7 +4,7 @@ import { Star, Send, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import { getEventDisplayName } from "@/lib/eventDisplay";
 
 type CustomerEvent = {

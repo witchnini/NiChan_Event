@@ -4,7 +4,7 @@ import { Send, Phone, Mail, MapPin, ArrowRight, CheckCircle } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 

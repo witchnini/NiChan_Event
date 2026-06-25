@@ -4,7 +4,7 @@ import { ArrowLeft, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import ContractDocument, { type FullContract } from "@/components/ContractDocument";
+import ContractDocument, { type FullContract } from "@/components/features/contracts/ContractDocument";
 import { exportContractPdf } from "@/lib/contractPdf";
 import { useAuth } from "@/contexts/AuthContext";
 

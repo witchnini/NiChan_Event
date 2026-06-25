@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Award, Heart, Sparkles, Users, Target, Eye } from "lucide-react";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import aboutTeam from "@/assets/about-team.jpg";
 import portfolio1 from "@/assets/portfolio-1.jpg";
 

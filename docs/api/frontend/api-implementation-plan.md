@@ -2,7 +2,7 @@
 
 ## Companion Documents
 
-- Detailed API contract: `API_SPECIFICATION.md`
+- Detailed API contract: `api-specification.md`
 - Backend database design lives in `NiChan-backend/DATABASE_DESIGN.md`
 
 ## Rules
@@ -156,7 +156,7 @@
 - Status: `[ ]`
 - Frontend pages:
   - `src/pages/organizer/OrganizerDashboard.tsx`
-  - `src/pages/organizer/OrganizerLayout.tsx`
+  - `src/layouts/OrganizerLayout.tsx`
   - `src/pages/organizer/OrganizerNotifications.tsx`
 - Frontend mock APIs:
   - `getOrgProjectProgress`
@@ -267,7 +267,7 @@
 - Status: `[ ]`
 - Frontend pages:
   - `src/pages/admin/AdminDashboard.tsx`
-  - `src/pages/admin/AdminLayout.tsx`
+  - `src/layouts/AdminLayout.tsx`
   - `src/pages/admin/AdminNotifications.tsx`
 - Frontend mock APIs:
   - `getAdminNotifications`

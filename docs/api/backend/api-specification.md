@@ -700,6 +700,6 @@ Before coding a module, backend should have:
 Backend cannot be built safely from endpoint names alone.
 The combination required is:
 
-- `API_IMPLEMENTATION_PLAN.md` for order and tracking
+- `api-implementation-plan.md` for order and tracking
 - `DATABASE_DESIGN.md` for persistence model
-- `API_SPECIFICATION.md` for request/response/error contract
+- `api-specification.md` for request/response/error contract

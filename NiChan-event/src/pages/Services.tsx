@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { Search, Users, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import SectionHeading from "@/components/SectionHeading";
+import SectionHeading from "@/components/ui/section-heading";
 import heroImg from "@/assets/hero-wedding.jpg";
 import {
   getAllServices,
