@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
+  AlertCircle,
   Briefcase,
   Calendar,
   CheckCircle,
@@ -159,12 +160,23 @@ type BudgetItem = {
   vendor?: { id: string; name: string } | null;
 };
 
+type BudgetHealth = {
+  riskLevel: "empty" | "healthy" | "watch" | "at_risk" | "over_budget";
+  percentUsed: number;
+  variance: number;
+  remaining: number;
+  overrunItems: number;
+  nearingLimitItems: number;
+  alerts: string[];
+};
+
 type ProjectBudget = {
   project: { id: string; name: string };
   budget: { id: string; name: string };
   items: BudgetItem[];
   estimatedTotal: number;
   actualTotal: number;
+  budgetHealth?: BudgetHealth;
 };
 
 type ProjectView = "overview" | "kanban" | "timeline" | "staff" | "vendors";
@@ -327,6 +339,165 @@ const emptyForm: TaskFormState = {
   priority: "medium",
 };
 
+type TaskTemplate = {
+  id: string;
+  phase: string;
+  title: string;
+  description: string;
+  priority: KanbanTask["priority"];
+  dueDaysFromEvent: number;
+};
+
+type TaskTemplateGroup = {
+  id: string;
+  label: string;
+  matchKeywords: string[];
+  tasks: TaskTemplate[];
+};
+
+const createTemplate = (
+  id: string,
+  phase: string,
+  title: string,
+  description: string,
+  priority: KanbanTask["priority"],
+  dueDaysFromEvent: number,
+): TaskTemplate => ({ id, phase, title, description, priority, dueDaysFromEvent });
+
+const TASK_TEMPLATE_GROUPS: TaskTemplateGroup[] = [
+  {
+    id: "wedding",
+    label: "Tiệc cưới",
+    matchKeywords: ["tiec cuoi", "cuoi", "wedding", "dam cuoi"],
+    tasks: [
+      createTemplate("wedding-concept", "Lập kế hoạch", "Chốt concept cưới và moodboard", "Thống nhất phong cách trang trí, màu chủ đạo và hạng mục ưu tiên với khách hàng.", "high", -45),
+      createTemplate("wedding-venue", "Lập kế hoạch", "Khảo sát sảnh tiệc và sơ đồ bàn", "Kiểm tra mặt bằng, lối vào, khu vực lễ, sân khấu, bàn khách và luồng di chuyển.", "high", -35),
+      createTemplate("wedding-menu", "Nhà cung cấp", "Chốt thực đơn và số lượng khách", "Xác nhận menu, số bàn dự phòng, yêu cầu đặc biệt và thời điểm khóa số lượng.", "medium", -25),
+      createTemplate("wedding-decor", "Sản xuất", "Điều phối trang trí lễ đường và sảnh tiệc", "Phân công đội decor, hoa tươi, backdrop, photobooth và timeline setup.", "high", -14),
+      createTemplate("wedding-script", "Vận hành", "Chốt kịch bản lễ cưới và timeline chương trình", "Hoàn thiện cue sheet cho MC, nghi lễ, âm nhạc, phát biểu và các điểm nhấn.", "high", -10),
+      createTemplate("wedding-rehearsal", "Vận hành", "Tổng duyệt MC, âm thanh và ánh sáng", "Chạy thử nghi thức, nhạc nền, micro, ánh sáng sân khấu và tín hiệu điều phối.", "high", -3),
+      createTemplate("wedding-guest-flow", "Ngày sự kiện", "Checklist đón khách và phân luồng bàn tiệc", "Chuẩn bị lễ tân, bảng sơ đồ bàn, line đón khách VIP và phương án xử lý phát sinh.", "medium", -1),
+      createTemplate("wedding-handover", "Sau sự kiện", "Tổng kết sau tiệc và bàn giao tư liệu", "Chốt biên bản, hình ảnh/video, phản hồi khách hàng và các khoản cần đối soát.", "medium", 2),
+    ],
+  },
+  {
+    id: "conference",
+    label: "Hội nghị & hội thảo",
+    matchKeywords: ["hoi nghi", "hoi thao", "conference", "seminar", "workshop", "doanh nghiep"],
+    tasks: [
+      createTemplate("conference-agenda", "Lập kế hoạch", "Chốt agenda và flow check-in", "Khóa agenda, khung giờ check-in, phân luồng khách mời và điểm hỗ trợ thông tin.", "high", -30),
+      createTemplate("conference-speakers", "Khách mời", "Xác nhận diễn giả và khách VIP", "Xác nhận hồ sơ diễn giả, thời lượng trình bày, nhu cầu kỹ thuật và lễ tân VIP.", "high", -25),
+      createTemplate("conference-layout", "Sản xuất", "Thiết kế layout sân khấu, booth và khu vực networking", "Hoàn thiện sơ đồ sân khấu, booth tài trợ, bàn đăng ký và không gian giao lưu.", "medium", -20),
+      createTemplate("conference-tech", "Kỹ thuật", "Kiểm tra thiết bị trình chiếu, âm thanh và phiên dịch", "Rà soát màn hình, máy chiếu, micro, clicker, livestream và cabin phiên dịch nếu có.", "high", -12),
+      createTemplate("conference-materials", "Vận hành", "Chuẩn bị tài liệu, badge và QR check-in", "In ấn badge, tài liệu, standee, QR check-in và bộ vật phẩm cho người tham dự.", "medium", -7),
+      createTemplate("conference-rehearsal", "Vận hành", "Chạy thử kỹ thuật toàn bộ chương trình", "Test slide, video, âm thanh, ánh sáng, livestream, tín hiệu chuyển cảnh và cue MC.", "high", -2),
+      createTemplate("conference-live", "Ngày sự kiện", "Điều phối phiên họp và hỗ trợ diễn giả", "Theo sát từng phiên, hỗ trợ diễn giả, xử lý câu hỏi và cập nhật timeline thực tế.", "high", 0),
+      createTemplate("conference-report", "Sau sự kiện", "Báo cáo attendance và feedback", "Tổng hợp số người tham dự, phản hồi, hình ảnh và các hạng mục cần cải thiện.", "medium", 2),
+    ],
+  },
+  {
+    id: "opening",
+    label: "Lễ khai trương",
+    matchKeywords: ["khai truong", "opening", "showroom", "ra mat", "launch"],
+    tasks: [
+      createTemplate("opening-site", "Lập kế hoạch", "Khảo sát mặt bằng và luồng khách", "Đánh giá lối vào, khu cắt băng, khu đón khách, bãi xe và điểm đặt backdrop.", "high", -25),
+      createTemplate("opening-ritual", "Nghi thức", "Chốt nghi thức cắt băng và khai trương", "Xác nhận đại biểu, vật phẩm nghi thức, thứ tự phát biểu và cue cắt băng.", "high", -18),
+      createTemplate("opening-decor", "Sản xuất", "Lên phương án trang trí cổng, backdrop và booth", "Chốt thiết kế cổng chào, thảm đỏ, hoa, standee, booth trải nghiệm và POSM.", "medium", -14),
+      createTemplate("opening-safety", "Vận hành", "Kiểm tra giấy phép và an toàn khu vực setup", "Rà soát điện, PCCC, lối thoát hiểm, giấy phép âm thanh và các yêu cầu mặt bằng.", "high", -10),
+      createTemplate("opening-show", "Nội dung", "Điều phối MC, múa lân và tiết mục biểu diễn", "Khóa kịch bản MC, thời lượng biểu diễn, vị trí chờ và tín hiệu vào sân khấu.", "medium", -7),
+      createTemplate("opening-tech", "Kỹ thuật", "Chạy thử âm thanh, ánh sáng và hiệu ứng", "Test micro, loa, nhạc hiệu, ánh sáng, pháo giấy hoặc hiệu ứng được duyệt.", "high", -2),
+      createTemplate("opening-vip", "Ngày sự kiện", "Checklist đón khách VIP và truyền thông tại chỗ", "Phân công lễ tân VIP, photographer, quay phim, vị trí báo chí và timeline đăng bài.", "high", 0),
+      createTemplate("opening-handover", "Sau sự kiện", "Tháo dỡ, bàn giao và tổng kết hình ảnh", "Bàn giao mặt bằng, đối soát vendor, gom file hình ảnh và ghi nhận phản hồi.", "medium", 1),
+    ],
+  },
+  {
+    id: "birthday",
+    label: "Sinh nhật",
+    matchKeywords: ["sinh nhat", "birthday"],
+    tasks: [
+      createTemplate("birthday-theme", "Lập kế hoạch", "Chốt chủ đề và màu sắc trang trí", "Thống nhất concept, nhân vật/chủ đề, bảng màu và khu vực trang trí trọng tâm.", "high", -21),
+      createTemplate("birthday-guests", "Khách mời", "Xác nhận danh sách khách và khu vực bàn tiệc", "Chốt số lượng khách, khu gia đình, khu trẻ em và nhu cầu chỗ ngồi đặc biệt.", "medium", -14),
+      createTemplate("birthday-cake", "Nhà cung cấp", "Chốt bánh, quà tặng và hoạt động trò chơi", "Xác nhận bánh, quà cảm ơn, trò chơi, nhân sự hoạt náo và đạo cụ cần chuẩn bị.", "medium", -10),
+      createTemplate("birthday-decor", "Sản xuất", "Điều phối backdrop, photobooth và sân khấu nhỏ", "Phân công decor, in ấn, bong bóng, bàn gallery và khu chụp hình.", "medium", -7),
+      createTemplate("birthday-tech", "Kỹ thuật", "Kiểm tra âm thanh, ánh sáng và playlist", "Test loa, micro, nhạc sinh nhật, ánh sáng khu sân khấu và phương án dự phòng.", "medium", -2),
+      createTemplate("birthday-setup", "Ngày sự kiện", "Setup khu đón khách và khu trẻ em", "Chuẩn bị bảng tên, quà, khu trò chơi, nhân sự hỗ trợ trẻ em và luồng vào tiệc.", "high", 0),
+      createTemplate("birthday-handover", "Sau sự kiện", "Tổng kết và bàn giao ảnh/video", "Thu gom đạo cụ, đối soát chi phí, bàn giao ảnh/video và ghi nhận phản hồi.", "low", 1),
+    ],
+  },
+  {
+    id: "gala",
+    label: "Gala / Year End Party",
+    matchKeywords: ["gala", "year end", "tat nien", "cuoi nam", "party", "vinh danh"],
+    tasks: [
+      createTemplate("gala-theme", "Lập kế hoạch", "Chốt chủ đề gala và dress code", "Thống nhất chủ đề, màu nhận diện, dress code và trải nghiệm khách mời.", "high", -35),
+      createTemplate("gala-awards", "Nội dung", "Lên kịch bản vinh danh và trao giải", "Chốt danh mục giải thưởng, người trao, thứ tự công bố và nội dung trình chiếu.", "high", -25),
+      createTemplate("gala-seating", "Khách mời", "Chốt sơ đồ bàn và khu vực VIP", "Hoàn thiện seating plan, khu VIP, bàn lãnh đạo và phương án check-in.", "medium", -14),
+      createTemplate("gala-stage", "Sản xuất", "Điều phối sân khấu, LED, âm thanh và ánh sáng", "Khóa thiết kế sân khấu, LED content, âm thanh, ánh sáng, hiệu ứng và nhân sự kỹ thuật.", "high", -10),
+      createTemplate("gala-performance", "Nội dung", "Chuẩn bị tiết mục biểu diễn và cue list", "Chốt tiết mục, file nhạc, đạo cụ, vị trí chờ và tín hiệu vào/ra sân khấu.", "medium", -7),
+      createTemplate("gala-rehearsal", "Vận hành", "Tổng duyệt chương trình", "Chạy rehearsal MC, trao giải, trình diễn, video, ánh sáng và đội điều phối.", "high", -2),
+      createTemplate("gala-live", "Ngày sự kiện", "Điều phối check-in, tiệc và trao giải", "Theo sát timeline, khách VIP, bàn tiệc, cue trao giải và xử lý phát sinh.", "high", 0),
+      createTemplate("gala-close", "Sau sự kiện", "Tổng kết chi phí và bàn giao tư liệu", "Đối soát vendor, tổng hợp hình ảnh/video, feedback và báo cáo ngân sách.", "medium", 2),
+    ],
+  },
+  {
+    id: "ceremony",
+    label: "Lễ động thổ / khánh thành",
+    matchKeywords: ["dong tho", "khoi cong", "khanh thanh", "inauguration", "groundbreaking", "ky niem"],
+    tasks: [
+      createTemplate("ceremony-site", "Lập kế hoạch", "Khảo sát mặt bằng và phương án setup", "Kiểm tra khu vực sân khấu, nhà bạt, lối VIP, bãi xe, điện và điều kiện thời tiết.", "high", -30),
+      createTemplate("ceremony-ritual", "Nghi thức", "Chốt nghi thức và danh sách đại biểu", "Khóa thành phần đại biểu, thứ tự phát biểu, nghi thức chính và vai trò từng người.", "high", -21),
+      createTemplate("ceremony-layout", "Sản xuất", "Lập sơ đồ sân khấu, nhà bạt và khu vực khách", "Hoàn thiện layout, khu lễ tân, khu báo chí, khu kỹ thuật và đường di chuyển.", "medium", -15),
+      createTemplate("ceremony-items", "Nghi thức", "Chuẩn bị vật phẩm nghi lễ và bảng tên", "Chuẩn bị xẻng, mũ, găng tay, băng khánh thành, bảng tên, hoa và tài liệu đại biểu.", "medium", -10),
+      createTemplate("ceremony-safety", "Vận hành", "Kiểm tra an toàn, điện và âm thanh ngoài trời", "Rà soát tải điện, dây dẫn, loa, micro, PCCC, lối thoát và phương án mưa.", "high", -5),
+      createTemplate("ceremony-rehearsal", "Vận hành", "Tổng duyệt nghi thức và tuyến di chuyển VIP", "Chạy thử nghi thức chính, vị trí đứng, cue MC và tuyến di chuyển đại biểu.", "high", -1),
+      createTemplate("ceremony-live", "Ngày sự kiện", "Điều phối ngày lễ và truyền thông hiện trường", "Theo sát timeline, lễ tân, báo chí, photographer, quay phim và xử lý phát sinh.", "high", 0),
+      createTemplate("ceremony-handover", "Sau sự kiện", "Bàn giao mặt bằng và báo cáo sau sự kiện", "Tháo dỡ, bàn giao mặt bằng, đối soát vendor, gom tư liệu và báo cáo tổng kết.", "medium", 1),
+    ],
+  },
+  {
+    id: "default",
+    label: "Sự kiện tổng hợp",
+    matchKeywords: [],
+    tasks: [
+      createTemplate("default-brief", "Lập kế hoạch", "Chốt brief vận hành và mục tiêu sự kiện", "Thống nhất mục tiêu, phạm vi công việc, tiêu chí thành công và đầu mối phê duyệt.", "high", -30),
+      createTemplate("default-budget", "Ngân sách", "Rà soát ngân sách và hạng mục ưu tiên", "Tách ngân sách theo hạng mục, xác định khoản bắt buộc và khoản có thể linh hoạt.", "high", -25),
+      createTemplate("default-vendors", "Nhà cung cấp", "Chọn vendor phù hợp cho từng hạng mục", "Đề xuất, so sánh và chốt vendor theo chất lượng, thời gian đáp ứng và ngân sách.", "medium", -18),
+      createTemplate("default-layout", "Sản xuất", "Chốt layout, timeline và nhân sự vận hành", "Hoàn thiện sơ đồ setup, timeline chi tiết, ca trực và người chịu trách nhiệm.", "high", -12),
+      createTemplate("default-assets", "Sản xuất", "Chuẩn bị vật phẩm, thiết kế và tài liệu", "Rà soát file in ấn, vật phẩm, quà tặng, tài liệu và checklist bàn giao.", "medium", -7),
+      createTemplate("default-rehearsal", "Vận hành", "Chạy thử kỹ thuật và tổng duyệt", "Test âm thanh, ánh sáng, trình chiếu, tín hiệu điều phối và kịch bản chính.", "high", -2),
+      createTemplate("default-live", "Ngày sự kiện", "Điều phối ngày sự kiện theo checklist", "Theo sát timeline, check-in, khách VIP, vendor, nhân sự và phát sinh tại hiện trường.", "high", 0),
+      createTemplate("default-report", "Sau sự kiện", "Tổng kết, đối soát và bàn giao sau sự kiện", "Đối soát chi phí, tài liệu, hình ảnh/video, phản hồi khách hàng và bài học cải tiến.", "medium", 2),
+    ],
+  },
+];
+
+const normalizeTemplateText = (value?: string | null) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
+
+const normalizeTaskTitle = (value?: string | null) =>
+  normalizeTemplateText(value).replace(/\s+/g, " ").trim();
+
+const pickTaskTemplateGroup = (context: string) => {
+  const normalized = normalizeTemplateText(context);
+  return (
+    TASK_TEMPLATE_GROUPS.find((group) =>
+      group.matchKeywords.some((keyword) => normalized.includes(keyword)),
+    ) ?? TASK_TEMPLATE_GROUPS[TASK_TEMPLATE_GROUPS.length - 1]
+  );
+};
+
+const toDateInputValue = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString("vi-VN") : "Chưa cập nhật";
 
@@ -406,6 +577,7 @@ const OrganizerProjects = () => {
   const [staffListOpen, setStaffListOpen] = useState(false);
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
+  const [customTaskMode, setCustomTaskMode] = useState(false);
   const [targetStatus, setTargetStatus] = useState("todo");
   const [form, setForm] = useState(emptyForm);
   const [vendorForm, setVendorForm] = useState(emptyVendorForm);
@@ -483,6 +655,7 @@ const OrganizerProjects = () => {
   );
 
   const budgetItems = useMemo(() => projectBudget?.items ?? [], [projectBudget]);
+  const projectBudgetAlert = projectBudget?.budgetHealth?.alerts?.[0] ?? null;
 
   const vendorBudgetStats = useMemo(() => {
     return budgetItems.reduce<Record<string, { count: number; estimated: number; actual: number }>>((acc, item) => {
@@ -515,6 +688,46 @@ const OrganizerProjects = () => {
 
   const allColumns = useMemo(() => kanban?.columns ?? [], [kanban]);
   const allTasks = useMemo(() => allColumns.flatMap((column) => column.tasks), [allColumns]);
+  const taskTemplateContext = useMemo(
+    () =>
+      [
+        activeProjectDisplayName,
+        activeProject?.type,
+        activeProject?.consultationRequest?.eventType,
+        activeProject?.consultationRequest?.note,
+        kanban?.project.name,
+        kanban?.project.consultationRequest?.eventType,
+        kanban?.project.consultationRequest?.note,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    [
+      activeProjectDisplayName,
+      activeProject?.type,
+      activeProject?.consultationRequest?.eventType,
+      activeProject?.consultationRequest?.note,
+      kanban?.project.name,
+      kanban?.project.consultationRequest?.eventType,
+      kanban?.project.consultationRequest?.note,
+    ],
+  );
+  const taskTemplateGroup = useMemo(
+    () => pickTaskTemplateGroup(taskTemplateContext),
+    [taskTemplateContext],
+  );
+  const serviceTaskTemplates = taskTemplateGroup.tasks;
+  const usedTaskTitles = useMemo(
+    () => new Set(allTasks.map((task) => normalizeTaskTitle(task.title))),
+    [allTasks],
+  );
+  const missingServiceTaskTemplates = useMemo(
+    () => serviceTaskTemplates.filter((template) => !usedTaskTitles.has(normalizeTaskTitle(template.title))),
+    [serviceTaskTemplates, usedTaskTitles],
+  );
+  const selectedTemplate = useMemo(
+    () => serviceTaskTemplates.find((template) => template.title === form.title) ?? null,
+    [form.title, serviceTaskTemplates],
+  );
   const overdueTasks = useMemo(
     () => allTasks.filter((task) => task.status !== "done" && isOverdue(task.dueAt)).length,
     [allTasks],
@@ -688,16 +901,48 @@ const OrganizerProjects = () => {
     if (currentId) await loadProjectContext(currentId);
   };
 
+  const buildTaskFormFromTemplate = (template: TaskTemplate, assigneeUserId = ""): TaskFormState => {
+    const eventTime = getTime(activeProject?.eventDate ?? kanban?.project.eventDate);
+    const dueAt = eventTime === null
+      ? ""
+      : toDateInputValue(new Date(startOfDay(eventTime) + template.dueDaysFromEvent * DAY_MS));
+
+    return {
+      title: template.title,
+      description: template.description,
+      assigneeUserId,
+      dueAt,
+      priority: template.priority,
+    };
+  };
+
+  const selectTaskTemplate = (template: TaskTemplate) => {
+    setCustomTaskMode(false);
+    setForm((current) => buildTaskFormFromTemplate(template, current.assigneeUserId));
+  };
+
+  const selectCustomTask = () => {
+    setCustomTaskMode(true);
+    setForm((current) => ({
+      ...emptyForm,
+      assigneeUserId: current.assigneeUserId,
+    }));
+  };
+
   const openAdd = (columnId: string) => {
+    const firstTemplate = missingServiceTaskTemplates[0];
+
     setTargetStatus(columnId);
     setEditingTask(null);
-    setForm(emptyForm);
+    setCustomTaskMode(!firstTemplate);
+    setForm(firstTemplate ? buildTaskFormFromTemplate(firstTemplate) : emptyForm);
     setDialogOpen(true);
   };
 
   const openEdit = (task: KanbanTask) => {
     setTargetStatus(task.status);
     setEditingTask(task);
+    setCustomTaskMode(false);
     setForm({
       title: task.title,
       description: task.description || "",
@@ -710,6 +955,10 @@ const OrganizerProjects = () => {
 
   const saveTask = async () => {
     if (!selectedProjectId || !form.title.trim()) return;
+    if (!editingTask && usedTaskTitles.has(normalizeTaskTitle(form.title))) {
+      toast.error("Công việc này đã có trong dự án");
+      return;
+    }
 
     const payload = {
       title: form.title.trim(),
@@ -737,6 +986,33 @@ const OrganizerProjects = () => {
       await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Không thể lưu công việc");
+    }
+  };
+
+  const createMissingTemplateTasks = async () => {
+    if (!selectedProjectId || missingServiceTaskTemplates.length === 0) return;
+
+    try {
+      await Promise.all(
+        missingServiceTaskTemplates.map((template, index) => {
+          const taskForm = buildTaskFormFromTemplate(template);
+          return apiClient.post("/organizer/tasks", {
+            title: taskForm.title,
+            description: taskForm.description || undefined,
+            assigneeUserId: null,
+            dueAt: toApiDateTime(taskForm.dueAt),
+            priority: taskForm.priority,
+            eventId: selectedProjectId,
+            status: "todo",
+            sortOrder: index,
+          });
+        }),
+      );
+
+      toast.success(`Đã tạo ${missingServiceTaskTemplates.length} công việc theo checklist`);
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể tạo checklist công việc");
     }
   };
 
@@ -1241,83 +1517,114 @@ const OrganizerProjects = () => {
           )}
 
           {view === "kanban" && (
-            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-4">
-              {allColumns.map((column) => (
-                <div key={column.id} className="bg-surface-low rounded-xl p-4 min-w-0">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-serif font-semibold text-foreground text-sm">{column.title}</h3>
-                      <span className="font-body text-xs text-muted-foreground bg-surface-high rounded-full px-2 py-0.5">
-                        {column.tasks.length}
-                      </span>
-                    </div>
-                    <button onClick={() => openAdd(column.id)} className="text-muted-foreground hover:text-foreground" title="Thêm công việc">
-                      <Plus size={16} />
-                    </button>
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 rounded-xl bg-surface-lowest p-4 shadow-ambient sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <ListChecks size={18} />
                   </div>
-
-                  <div className="space-y-3 min-h-[120px]">
-                    <AnimatePresence>
-                      {column.tasks.map((task) => (
-                        <motion.div
-                          key={task.id}
-                          layout
-                          initial={{ opacity: 0, scale: 0.96 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.96 }}
-                          className="bg-surface-lowest rounded-xl p-4 shadow-ambient group"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-body text-sm font-semibold text-foreground break-words">{task.title}</p>
-                              <div className="flex flex-wrap gap-2 mt-2 text-xs font-body">
-                                <span className={`px-2 py-0.5 rounded-full font-semibold ${priorityColors[task.priority]}`}>
-                                  {priorityLabel[task.priority]}
-                                </span>
-                                <span className={isOverdue(task.dueAt) && task.status !== "done" ? "text-destructive" : "text-muted-foreground"}>
-                                  <Calendar size={11} className="inline mr-1" /> {task.dueAt ? formatDate(task.dueAt) : "Chưa có hạn"}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 mt-2">
-                                <div className="w-5 h-5 rounded-full bg-secondary/20 flex items-center justify-center">
-                                  <Users size={10} className="text-secondary" />
-                                </div>
-                                <span className="font-body text-xs text-muted-foreground">
-                                  {task.assignee?.displayName || "Chưa phân công"}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => openEdit(task)} className="text-muted-foreground hover:text-foreground" title="Sửa">
-                                <Edit2 size={13} />
-                              </button>
-                              <button onClick={() => deleteTask(task.id)} className="text-muted-foreground hover:text-destructive" title="Xóa">
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="flex gap-1 mt-3 pt-2 border-t border-border flex-wrap">
-                            {(allowedTaskMoves[task.status] ?? []).map((nextStatus) => {
-                              const target = allColumns.find((item) => item.id === nextStatus);
-                              if (!target) return null;
-                              return (
-                                <button
-                                  key={nextStatus}
-                                  onClick={() => moveTask(task, nextStatus)}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-body text-muted-foreground hover:bg-surface-low"
-                                >
-                                  <ChevronRight size={10} /> {target.title}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </AnimatePresence>
+                  <div className="min-w-0">
+                    <h3 className="font-serif text-headline-sm text-foreground">
+                      Checklist vận hành {taskTemplateGroup.label}
+                    </h3>
+                    <p className="mt-1 font-body text-sm text-muted-foreground">
+                      {serviceTaskTemplates.length - missingServiceTaskTemplates.length}/{serviceTaskTemplates.length} công việc đã có trong dự án
+                    </p>
                   </div>
                 </div>
-              ))}
+                <Button
+                  variant="hero"
+                  size="sm"
+                  onClick={createMissingTemplateTasks}
+                  disabled={missingServiceTaskTemplates.length === 0}
+                  className="shrink-0 rounded-xl"
+                >
+                  <Plus size={14} /> Tạo {missingServiceTaskTemplates.length} việc còn thiếu
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-4">
+                {allColumns.map((column) => (
+                  <div key={column.id} className="bg-surface-low rounded-xl p-4 min-w-0">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-serif font-semibold text-foreground text-sm">{column.title}</h3>
+                        <span className="font-body text-xs text-muted-foreground bg-surface-high rounded-full px-2 py-0.5">
+                          {column.tasks.length}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => openAdd(column.id)}
+                        className="text-muted-foreground hover:text-foreground"
+                        title="Thêm công việc"
+                      >
+                        <Plus size={16} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 min-h-[120px]">
+                      <AnimatePresence>
+                        {column.tasks.map((task) => (
+                          <motion.div
+                            key={task.id}
+                            layout
+                            initial={{ opacity: 0, scale: 0.96 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.96 }}
+                            className="bg-surface-lowest rounded-xl p-4 shadow-ambient group"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="font-body text-sm font-semibold text-foreground break-words">{task.title}</p>
+                                <div className="flex flex-wrap gap-2 mt-2 text-xs font-body">
+                                  <span className={`px-2 py-0.5 rounded-full font-semibold ${priorityColors[task.priority]}`}>
+                                    {priorityLabel[task.priority]}
+                                  </span>
+                                  <span className={isOverdue(task.dueAt) && task.status !== "done" ? "text-destructive" : "text-muted-foreground"}>
+                                    <Calendar size={11} className="inline mr-1" /> {task.dueAt ? formatDate(task.dueAt) : "Chưa có hạn"}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 mt-2">
+                                  <div className="w-5 h-5 rounded-full bg-secondary/20 flex items-center justify-center">
+                                    <Users size={10} className="text-secondary" />
+                                  </div>
+                                  <span className="font-body text-xs text-muted-foreground">
+                                    {task.assignee?.displayName || "Chưa phân công"}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => openEdit(task)} className="text-muted-foreground hover:text-foreground" title="Sửa">
+                                  <Edit2 size={13} />
+                                </button>
+                                <button onClick={() => deleteTask(task.id)} className="text-muted-foreground hover:text-destructive" title="Xóa">
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex gap-1 mt-3 pt-2 border-t border-border flex-wrap">
+                              {(allowedTaskMoves[task.status] ?? []).map((nextStatus) => {
+                                const target = allColumns.find((item) => item.id === nextStatus);
+                                if (!target) return null;
+                                return (
+                                  <button
+                                    key={nextStatus}
+                                    onClick={() => moveTask(task, nextStatus)}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-body text-muted-foreground hover:bg-surface-low"
+                                  >
+                                    <ChevronRight size={10} /> {target.title}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </motion.div>
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1407,6 +1714,12 @@ const OrganizerProjects = () => {
                       {budgetItems.length} hạng mục · Dự toán {formatCurrency(projectBudget?.estimatedTotal ?? 0)}
                     </p>
                   </div>
+                  {projectBudgetAlert && (
+                    <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-destructive/10 px-3 py-1.5 font-body text-xs font-semibold text-destructive">
+                      <AlertCircle size={14} className="shrink-0" />
+                      <span className="truncate">{projectBudgetAlert}</span>
+                    </span>
+                  )}
                 </div>
 
                 {budgetItems.length > 0 ? (
@@ -1861,20 +2174,121 @@ const OrganizerProjects = () => {
       </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="font-serif">{editingTask ? "Sửa công việc" : "Thêm công việc mới"}</DialogTitle>
+            {!editingTask && (
+              <DialogDescription>
+                Chọn từ checklist {taskTemplateGroup.label} hoặc thêm công việc tùy chỉnh khi dự án phát sinh việc ngoài mẫu.
+              </DialogDescription>
+            )}
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="font-body text-sm text-foreground mb-1 block">Tên công việc</label>
-              <Input
-                value={form.title}
-                onChange={(event) => setForm({ ...form, title: event.target.value })}
-                placeholder="Nhập tên công việc..."
-                className="rounded-xl border-none bg-surface-low"
-              />
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label className="font-body text-sm text-foreground">Công việc cần làm</label>
+                {!editingTask && customTaskMode && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                    Tùy chỉnh
+                  </span>
+                )}
+                {!editingTask && !customTaskMode && selectedTemplate && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-primary">
+                    {selectedTemplate.phase}
+                  </span>
+                )}
+              </div>
+              {editingTask ? (
+                <Input
+                  value={form.title}
+                  disabled
+                  className="rounded-xl border-none bg-surface-low"
+                />
+              ) : (
+                <div className="grid max-h-[300px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {serviceTaskTemplates.map((template) => {
+                    const alreadyAdded = usedTaskTitles.has(normalizeTaskTitle(template.title));
+                    const selected = !customTaskMode && form.title === template.title;
+                    const templateForm = buildTaskFormFromTemplate(template, form.assigneeUserId);
+
+                    return (
+                      <button
+                        key={template.id}
+                        type="button"
+                        disabled={alreadyAdded}
+                        onClick={() => selectTaskTemplate(template)}
+                        className={`min-h-[132px] rounded-xl border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-45 ${
+                          selected
+                            ? "border-primary bg-primary/10"
+                            : "border-border bg-surface-low hover:border-primary/60 hover:bg-surface-high"
+                        }`}
+                      >
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                            {template.phase}
+                          </span>
+                          <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${priorityColors[template.priority]}`}>
+                            {priorityLabel[template.priority]}
+                          </span>
+                          {alreadyAdded && (
+                            <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-secondary">
+                              Đã có
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-body text-sm font-semibold leading-snug text-foreground">
+                          {template.title}
+                        </p>
+                        <p className="mt-1 line-clamp-2 font-body text-xs leading-relaxed text-muted-foreground">
+                          {template.description}
+                        </p>
+                        <p className="mt-2 font-body text-[11px] font-semibold text-muted-foreground">
+                          Deadline: {templateForm.dueAt ? formatDate(templateForm.dueAt) : "Chưa có hạn"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={selectCustomTask}
+                    className={`min-h-[132px] rounded-xl border p-3 text-left transition-all ${
+                      customTaskMode
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-surface-low hover:border-primary/60 hover:bg-surface-high"
+                    }`}
+                  >
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                        Phát sinh
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${priorityColors.medium}`}>
+                        Linh hoạt
+                      </span>
+                    </div>
+                    <p className="font-body text-sm font-semibold leading-snug text-foreground">
+                      Công việc tùy chỉnh
+                    </p>
+                    <p className="mt-1 line-clamp-2 font-body text-xs leading-relaxed text-muted-foreground">
+                      Dùng khi dự án có yêu cầu riêng chưa nằm trong checklist dịch vụ.
+                    </p>
+                    <p className="mt-2 font-body text-[11px] font-semibold text-muted-foreground">
+                      Organizer tự nhập tên, mô tả và deadline
+                    </p>
+                  </button>
+                </div>
+              )}
             </div>
+            {!editingTask && customTaskMode && (
+              <div>
+                <label className="font-body text-sm text-foreground mb-1 block">Tên công việc tùy chỉnh</label>
+                <Input
+                  value={form.title}
+                  onChange={(event) => setForm({ ...form, title: event.target.value })}
+                  placeholder="Nhập tên công việc phát sinh..."
+                  className="rounded-xl border-none bg-surface-low"
+                />
+              </div>
+            )}
             <div>
               <label className="font-body text-sm text-foreground mb-1 block">Mô tả</label>
               <Input
@@ -1923,7 +2337,9 @@ const OrganizerProjects = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Hủy</Button>
-            <Button variant="hero" onClick={saveTask}>{editingTask ? "Cập nhật" : "Thêm"}</Button>
+            <Button variant="hero" onClick={saveTask} disabled={!form.title.trim()}>
+              {editingTask ? "Cập nhật" : "Thêm"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

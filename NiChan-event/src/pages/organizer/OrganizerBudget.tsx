@@ -10,9 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 
-type Project = { id: string; name: string };
+type Project = {
+  id: string;
+  name: string;
+  type?: string | null;
+  consultationRequest?: { eventType?: string | null } | null;
+};
 type Vendor = { id: string; name: string; status?: string | null };
 type ProjectVendor = { vendor: Vendor };
+type BudgetCategorySuggestion = { id: string; name: string };
 type BudgetItem = {
   id: string;
   category: string;
@@ -23,9 +29,29 @@ type BudgetItem = {
   vendorId?: string | null;
   vendor?: { id: string; name: string } | null;
 };
-type ProjectBudget = { project: Project; budget: { id: string; name: string }; items: BudgetItem[]; estimatedTotal: number; actualTotal: number };
+type BudgetRiskLevel = "empty" | "healthy" | "watch" | "at_risk" | "over_budget";
+type BudgetHealth = {
+  riskLevel: BudgetRiskLevel;
+  percentUsed: number;
+  variance: number;
+  remaining: number;
+  overrunItems: number;
+  nearingLimitItems: number;
+  alerts: string[];
+};
+type ProjectBudget = {
+  project: Project;
+  budget: { id: string; name: string };
+  items: BudgetItem[];
+  estimatedTotal: number;
+  actualTotal: number;
+  categoryGroup?: { id: string; label: string };
+  categorySuggestions: BudgetCategorySuggestion[];
+  budgetHealth?: BudgetHealth;
+};
 
 const NO_VENDOR = "none";
+const CUSTOM_CATEGORY = "__custom_category__";
 
 const statusLabel: Record<string, string> = {
   planned: "Dự kiến",
@@ -43,9 +69,38 @@ const statusBadge: Record<string, string> = {
 
 const statusOptions = Object.keys(statusLabel);
 
-const emptyForm = { category: "", estimated: "", actual: "0", note: "", status: "planned", vendorId: NO_VENDOR };
+const budgetRiskTone: Record<BudgetRiskLevel, string> = {
+  empty: "border-border bg-surface-low text-muted-foreground",
+  healthy: "border-secondary/20 bg-secondary/10 text-secondary",
+  watch: "border-amber-400/40 bg-amber-50 text-amber-700",
+  at_risk: "border-destructive/30 bg-destructive/10 text-destructive",
+  over_budget: "border-destructive/40 bg-destructive/10 text-destructive",
+};
+
+const budgetRiskLabel: Record<BudgetRiskLevel, string> = {
+  empty: "Chưa có dự toán",
+  healthy: "Ngân sách ổn định",
+  watch: "Cần theo dõi",
+  at_risk: "Rủi ro vượt ngân sách",
+  over_budget: "Đã vượt ngân sách",
+};
+
+const emptyForm = {
+  category: "",
+  customCategory: "",
+  estimated: "",
+  actual: "0",
+  note: "",
+  status: "planned",
+  vendorId: NO_VENDOR,
+};
 const toMillion = (value: string | number) => Number(value || 0) / 1_000_000;
-const fromMillion = (value: string) => Number(value || 0) * 1_000_000;
+const fromMillion = (value: string) => Number(value.replace(",", ".") || 0) * 1_000_000;
+const formatMillion = (value: string | number) =>
+  toMillion(value).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+const formatMillionValue = (value: number) =>
+  value.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+const normalizeCategoryName = (value: string) => value.trim().toLowerCase();
 
 const OrganizerBudget = () => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -104,6 +159,9 @@ const OrganizerBudget = () => {
   const totalActual = current?.actualTotal ?? 0;
   const remaining = totalEstimated - totalActual;
   const percent = totalEstimated ? Math.round((totalActual / totalEstimated) * 100) : 0;
+  const progressValue = Math.min(percent, 100);
+  const budgetHealth = current?.budgetHealth;
+  const budgetRiskLevel = budgetHealth?.riskLevel ?? (percent > 100 ? "over_budget" : percent >= 90 ? "at_risk" : percent >= 75 ? "watch" : totalEstimated > 0 ? "healthy" : "empty");
 
   const visibleItems = useMemo(
     () => (current?.items ?? []).filter(item => statusFilter === "all" || item.status === statusFilter),
@@ -116,11 +174,31 @@ const OrganizerBudget = () => {
     actual: toMillion(item.actualAmount),
   })), [visibleItems]);
 
-  const openAdd = () => { setEditItem(null); setForm(emptyForm); setDialogOpen(true); };
+  const categoryOptions = useMemo(() => {
+    return current?.categorySuggestions ?? [];
+  }, [current]);
+
+  const getPreferredCategory = () => {
+    const suggestions = current?.categorySuggestions ?? [];
+    const usedCategories = new Set((current?.items ?? []).map((item) => normalizeCategoryName(item.category)));
+    return (
+      suggestions.find((category) => !usedCategories.has(normalizeCategoryName(category.name)))?.name ??
+      suggestions[0]?.name ??
+      ""
+    );
+  };
+
+  const openAdd = () => {
+    setEditItem(null);
+    setForm({ ...emptyForm, category: getPreferredCategory() || CUSTOM_CATEGORY });
+    setDialogOpen(true);
+  };
   const openEdit = (item: BudgetItem) => {
     setEditItem(item);
+    const isPresetCategory = (current?.categorySuggestions ?? []).some((category) => category.name === item.category);
     setForm({
-      category: item.category,
+      category: isPresetCategory ? item.category : CUSTOM_CATEGORY,
+      customCategory: isPresetCategory ? "" : item.category,
       estimated: String(toMillion(item.estimatedAmount)),
       actual: String(toMillion(item.actualAmount)),
       note: item.note ?? "",
@@ -136,10 +214,11 @@ const OrganizerBudget = () => {
       : null;
 
   const save = async () => {
-    if (!current || !form.category.trim()) return;
+    const category = form.category === CUSTOM_CATEGORY ? form.customCategory.trim() : form.category.trim();
+    if (!current || !category) return;
     const payload = {
       projectBudgetId: current.budget.id,
-      category: form.category,
+      category,
       estimatedAmount: fromMillion(form.estimated),
       actualAmount: fromMillion(form.actual),
       status: form.status,
@@ -182,9 +261,9 @@ const OrganizerBudget = () => {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: "Tổng dự toán", value: `${Math.round(toMillion(totalEstimated))}tr`, icon: Wallet, color: "text-primary" },
-          { label: "Đã chi thực tế", value: `${Math.round(toMillion(totalActual))}tr`, icon: TrendingDown, color: totalActual > totalEstimated * 0.8 ? "text-destructive" : "text-secondary" },
-          { label: "Còn lại", value: `${Math.round(toMillion(remaining))}tr`, icon: TrendingUp, color: "text-secondary" },
+          { label: "Tổng dự toán", value: `${formatMillion(totalEstimated)}tr`, icon: Wallet, color: "text-primary" },
+          { label: "Đã chi thực tế", value: `${formatMillion(totalActual)}tr`, icon: TrendingDown, color: totalActual > totalEstimated * 0.8 ? "text-destructive" : "text-secondary" },
+          { label: "Còn lại", value: `${formatMillion(remaining)}tr`, icon: remaining < 0 ? TrendingDown : TrendingUp, color: remaining < 0 ? "text-destructive" : "text-secondary" },
         ].map((stat, i) => (
           <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
             <stat.icon size={20} className={stat.color} />
@@ -212,7 +291,25 @@ const OrganizerBudget = () => {
               <h3 className="font-serif text-headline-md text-foreground">{current.project.name}</h3>
               <span className={`font-serif font-bold text-lg ${percent > 80 ? "text-destructive" : "text-secondary"}`}>{percent}% đã chi</span>
             </div>
-            <Progress value={percent} className="h-3 mb-6" />
+            <Progress value={progressValue} className="h-3 mb-4" />
+
+            <div className={`mb-6 rounded-xl border p-4 font-body text-sm ${budgetRiskTone[budgetRiskLevel]}`}>
+              <div className="flex items-start gap-3">
+                <AlertCircle size={18} className="mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold">{budgetRiskLabel[budgetRiskLevel]}</p>
+                  {budgetHealth?.alerts.length ? (
+                    <ul className="mt-1 space-y-1">
+                      {budgetHealth.alerts.map((alert) => (
+                        <li key={alert}>{alert}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1">Chi phí thực tế đang nằm trong dự toán.</p>
+                  )}
+                </div>
+              </div>
+            </div>
 
             <div className="flex gap-2 flex-wrap mb-4">
               {[{ id: "all", label: "Tất cả" }, ...statusOptions.map(s => ({ id: s, label: statusLabel[s] }))].map(opt => (
@@ -243,13 +340,13 @@ const OrganizerBudget = () => {
                   ) : visibleItems.map(item => {
                     const estimated = toMillion(item.estimatedAmount);
                     const actual = toMillion(item.actualAmount);
-                    const diff = actual - estimated;
+                    const diff = estimated - actual;
                     return (
                       <tr key={item.id} className="border-b border-border last:border-0 hover:bg-surface-low/50">
                         <td className="py-3 font-semibold text-foreground">{item.category}</td>
-                        <td className="py-3 text-right text-foreground">{Math.round(estimated)}</td>
-                        <td className="py-3 text-right text-foreground">{Math.round(actual)}{actual > estimated && <AlertCircle size={12} className="inline ml-1 text-destructive" />}</td>
-                        <td className={`py-3 text-right font-semibold ${diff > 0 ? "text-destructive" : diff < 0 ? "text-secondary" : "text-muted-foreground"}`}>{diff > 0 ? `+${Math.round(diff)}` : diff === 0 ? "-" : Math.round(diff)}</td>
+                        <td className="py-3 text-right text-foreground">{formatMillionValue(estimated)}</td>
+                        <td className="py-3 text-right text-foreground">{formatMillionValue(actual)}{actual > estimated && <AlertCircle size={12} className="inline ml-1 text-destructive" />}</td>
+                        <td className={`py-3 text-right font-semibold ${diff > 0 ? "text-secondary" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>{diff > 0 ? `+${formatMillionValue(diff)}` : diff === 0 ? "-" : formatMillionValue(diff)}</td>
                         <td className="py-3 pl-4">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-body font-semibold ${statusBadge[item.status] ?? "bg-muted text-muted-foreground"}`}>
                             {statusLabel[item.status] ?? item.status}
@@ -291,10 +388,21 @@ const OrganizerBudget = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader><DialogTitle className="font-serif">{editItem ? "Sửa hạng mục" : "Thêm hạng mục"}</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            <div><label className="font-body text-sm mb-1 block">Tên hạng mục</label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+            <div><label className="font-body text-sm mb-1 block">Hạng mục sự kiện</label>
+              <Select value={form.category} onValueChange={v => setForm({ ...form, category: v })}>
+                <SelectTrigger className="rounded-xl"><SelectValue placeholder="Chọn hạng mục" /></SelectTrigger>
+                <SelectContent>
+                  {categoryOptions.map(category => <SelectItem key={category.id} value={category.name}>{category.name}</SelectItem>)}
+                  <SelectItem value={CUSTOM_CATEGORY}>Hạng mục khác</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {form.category === CUSTOM_CATEGORY && (
+              <div><label className="font-body text-sm mb-1 block">Tên hạng mục mới</label><Input value={form.customCategory} onChange={e => setForm({ ...form, customCategory: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+            )}
             <div className="grid grid-cols-2 gap-4">
-              <div><label className="font-body text-sm mb-1 block">Dự toán (triệu)</label><Input type="number" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
-              <div><label className="font-body text-sm mb-1 block">Thực tế (triệu)</label><Input type="number" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+              <div><label className="font-body text-sm mb-1 block">Dự toán (triệu)</label><Input type="number" min="0" step="any" inputMode="decimal" placeholder="VD: 1.7" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+              <div><label className="font-body text-sm mb-1 block">Thực tế (triệu)</label><Input type="number" min="0" step="any" inputMode="decimal" placeholder="VD: 1.7" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><label className="font-body text-sm mb-1 block">Trạng thái</label>
@@ -318,7 +426,7 @@ const OrganizerBudget = () => {
             </div>
             <div><label className="font-body text-sm mb-1 block">Ghi chú</label><Input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>Hủy</Button><Button variant="hero" onClick={save}>Lưu</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>Hủy</Button><Button variant="hero" onClick={save} disabled={form.category === CUSTOM_CATEGORY ? !form.customCategory.trim() : !form.category.trim()}>Lưu</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

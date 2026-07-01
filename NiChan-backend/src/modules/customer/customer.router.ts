@@ -1,5 +1,6 @@
 import { Request, Response, Router } from "express";
 import { authenticate, requireRole } from "../../middleware/auth";
+import { buildMeta, parsePagination } from "../../utils/pagination";
 import { p, q } from "../../utils/request";
 import { sendSuccess } from "../../utils/response";
 import {
@@ -11,10 +12,13 @@ import {
   getCustomerDocuments,
   getCustomerEventById,
   getCustomerEvents,
+  getCustomerNotifications,
   getCustomerReviews,
   getCustomerTransactions,
   getEventMilestones,
+  markCustomerNotificationRead,
   sendChatMessage,
+  submitCustomerInstallmentPayment,
   submitCustomerPayment,
   submitReview,
 } from "./customer.service";
@@ -25,6 +29,24 @@ customerRouter.use(authenticate, requireRole("customer", "admin"));
 // GET /api/customer/dashboard
 customerRouter.get("/dashboard", async (req: Request, res: Response) => {
   const data = await getCustomerDashboard(req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/customer/notifications
+customerRouter.get("/notifications", async (req: Request, res: Response) => {
+  const pg = parsePagination(req, "createdAt");
+  const { items, total } = await getCustomerNotifications(req.user!.userId, {
+    read: q(req, "read"),
+    type: q(req, "type"),
+    skip: pg.skip,
+    take: pg.take,
+  });
+  sendSuccess(res, { data: items, meta: buildMeta(pg, total) });
+});
+
+// PATCH /api/customer/notifications/:id/read
+customerRouter.patch("/notifications/:id/read", async (req: Request, res: Response) => {
+  const data = await markCustomerNotificationRead(p(req, "id"), req.user!.userId);
   sendSuccess(res, { data });
 });
 
@@ -94,6 +116,12 @@ customerRouter.get("/transactions", async (req: Request, res: Response) => {
 customerRouter.post("/transactions", async (req: Request, res: Response) => {
   const data = await submitCustomerPayment(req.user!.userId, req.body);
   sendSuccess(res, { data, status: 201 });
+});
+
+// PATCH /api/customer/transactions/:id/pay
+customerRouter.patch("/transactions/:id/pay", async (req: Request, res: Response) => {
+  const data = await submitCustomerInstallmentPayment(req.user!.userId, p(req, "id"), req.body);
+  sendSuccess(res, { data });
 });
 
 // POST /api/customer/reviews

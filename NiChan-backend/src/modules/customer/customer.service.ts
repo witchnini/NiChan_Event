@@ -100,6 +100,42 @@ export const getCustomerDashboard = async (customerUserId: string) => {
   return { events, recentActivities, contracts, transactions };
 };
 
+export const getCustomerNotifications = async (
+  customerUserId: string,
+  filters: { read?: string; type?: string; skip: number; take: number },
+) => {
+  const where = {
+    userId: customerUserId,
+    scope: "customer",
+    ...(filters.read !== undefined ? { isRead: filters.read === "true" } : {}),
+    ...(filters.type ? { type: filters.type } : {}),
+  };
+
+  const [items, total] = await prisma.$transaction([
+    prisma.notification.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: filters.skip,
+      take: filters.take,
+    }),
+    prisma.notification.count({ where }),
+  ]);
+
+  return { items, total };
+};
+
+export const markCustomerNotificationRead = async (
+  id: string,
+  customerUserId: string,
+) => {
+  const result = await prisma.notification.updateMany({
+    where: { id, userId: customerUserId, scope: "customer" },
+    data: { isRead: true, readAt: new Date() },
+  });
+  if (result.count === 0) throw createError("NOT_FOUND", "Notification not found", 404);
+  return { updated: true };
+};
+
 // ─── Events ───────────────────────────────────────────────────────────────────
 
 export const getCustomerEvents = async (
@@ -445,6 +481,11 @@ const customerPaymentSchema = z
     message: "Event or contract is required",
   });
 
+const customerInstallmentPaymentSchema = z.object({
+  paymentMethod: z.string().min(1).max(100),
+  note: z.string().max(500).optional().nullable(),
+});
+
 const notifyAdminsAboutPayment = async (
   tx: Tx,
   input: {
@@ -599,6 +640,84 @@ export const submitCustomerPayment = async (customerUserId: string, body: unknow
     });
 
     return { transaction, notifications };
+  });
+
+  for (const notification of result.notifications) {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
+    });
+  }
+
+  return result.transaction;
+};
+
+export const submitCustomerInstallmentPayment = async (
+  customerUserId: string,
+  transactionId: string,
+  body: unknown,
+) => {
+  const input = customerInstallmentPaymentSchema.parse(body);
+  const note = input.note?.trim();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.findFirst({
+      where: {
+        id: transactionId,
+        status: "pending",
+        event: { customerUserId, status: { not: "cancelled" } },
+      },
+      include: customerTransactionInclude,
+    });
+
+    if (!transaction) {
+      throw createError("NOT_FOUND", "Payable transaction not found", 404);
+    }
+    if (!transaction.eventId || !transaction.event) {
+      throw createError("PAYMENT_NOT_AVAILABLE", "Transaction is not linked to an event", 409);
+    }
+    if (transaction.paymentMethod) {
+      throw createError("PAYMENT_ALREADY_SUBMITTED", "Payment was already submitted", 409);
+    }
+
+    const updated = await tx.transaction.update({
+      where: { id: transaction.id },
+      data: {
+        description: note ? `${transaction.description} - ${note}` : transaction.description,
+        transactionDate: new Date(),
+        paymentMethod: input.paymentMethod,
+      },
+      include: customerTransactionInclude,
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: transaction.eventId,
+        actorUserId: customerUserId,
+        iconName: "payment",
+        message: `Khách hàng đã chọn thanh toán ${money(toNumber(transaction.amount))}, chờ xác nhận.`,
+      },
+    });
+
+    const customer = await tx.user.findUnique({
+      where: { id: customerUserId },
+      select: { displayName: true },
+    });
+
+    const eventName = transaction.event.name || transaction.event.type || "sự kiện";
+    const notifications = await notifyAdminsAboutPayment(tx, {
+      transactionId: updated.id,
+      eventName,
+      amount: toNumber(updated.amount),
+      customerName: customer?.displayName ?? "Khách hàng",
+    });
+
+    return { transaction: updated, notifications };
   });
 
   for (const notification of result.notifications) {

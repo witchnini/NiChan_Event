@@ -56,6 +56,7 @@ type Transaction = {
 };
 
 type PaymentForm = {
+  transactionId: string;
   contractId: string;
   amount: string;
   paymentMethod: string;
@@ -87,6 +88,7 @@ const EventTracking = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [paymentForm, setPaymentForm] = useState<PaymentForm>({
+    transactionId: "",
     contractId: "",
     amount: "",
     paymentMethod: PAYMENT_METHODS[0],
@@ -96,8 +98,9 @@ const EventTracking = () => {
   const [loading, setLoading] = useState(true);
   const [attaching, setAttaching] = useState(false);
   const [paying, setPaying] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesListRef = useRef<HTMLDivElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
+  const paymentFormRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     if (!id) return;
@@ -148,7 +151,8 @@ const EventTracking = () => {
 
   // Cuộn xuống tin mới nhất khi danh sách thay đổi
   useEffect(() => {
-    if (activeTab === "chat") messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (activeTab !== "chat" || !messagesListRef.current) return;
+    messagesListRef.current.scrollTop = messagesListRef.current.scrollHeight;
   }, [messages, activeTab]);
 
   const contractSummaries = useMemo(() => (event?.contracts ?? []).map((contract) => {
@@ -186,11 +190,20 @@ const EventTracking = () => {
     [contractSummaries, paymentForm.contractId],
   );
 
-  const paymentLimit = selectedContract?.outstanding ?? totals.remaining;
+  const selectedTransaction = useMemo(
+    () => transactions.find((transaction) => transaction.id === paymentForm.transactionId),
+    [paymentForm.transactionId, transactions],
+  );
+
+  const paymentLimit = selectedTransaction
+    ? Number(selectedTransaction.amount || 0)
+    : selectedContract?.outstanding ?? totals.remaining;
 
   useEffect(() => {
     const contractIdFromQuery = searchParams.get("contractId");
     setPaymentForm((current) => {
+      if (current.transactionId) return current;
+
       const currentContract = contractSummaries.find(
         (contract) => contract.id === current.contractId && contract.payable && contract.outstanding > 0,
       );
@@ -272,9 +285,24 @@ const EventTracking = () => {
     const contract = contractSummaries.find((item) => item.id === contractId);
     setPaymentForm((current) => ({
       ...current,
+      transactionId: "",
       contractId,
       amount: contract?.outstanding ? String(contract.outstanding) : current.amount,
     }));
+  };
+
+  const selectPaymentTransaction = (transaction: Transaction) => {
+    setPaymentForm((current) => ({
+      ...current,
+      transactionId: transaction.id,
+      contractId: transaction.contract?.id ?? "",
+      amount: String(Number(transaction.amount || 0)),
+      paymentMethod: transaction.paymentMethod || current.paymentMethod || PAYMENT_METHODS[0],
+      note: "",
+    }));
+    requestAnimationFrame(() => {
+      paymentFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   const handleSubmitPayment = async () => {
@@ -299,15 +327,22 @@ const EventTracking = () => {
 
     setPaying(true);
     try {
-      await apiClient.post<Transaction>("/customer/transactions", {
-        eventId: id,
-        contractId: paymentForm.contractId || undefined,
-        amount,
-        paymentMethod: paymentForm.paymentMethod,
-        note: paymentForm.note.trim() || undefined,
-      });
+      if (paymentForm.transactionId) {
+        await apiClient.patch<Transaction>(`/customer/transactions/${paymentForm.transactionId}/pay`, {
+          paymentMethod: paymentForm.paymentMethod,
+          note: paymentForm.note.trim() || undefined,
+        });
+      } else {
+        await apiClient.post<Transaction>("/customer/transactions", {
+          eventId: id,
+          contractId: paymentForm.contractId || undefined,
+          amount,
+          paymentMethod: paymentForm.paymentMethod,
+          note: paymentForm.note.trim() || undefined,
+        });
+      }
       toast.success("Đã gửi thanh toán, vui lòng chờ admin xác nhận");
-      setPaymentForm((current) => ({ ...current, note: "" }));
+      setPaymentForm((current) => ({ ...current, transactionId: "", note: "" }));
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Gửi thanh toán thất bại");
@@ -411,7 +446,7 @@ const EventTracking = () => {
                 <h3 className="font-serif text-foreground font-semibold">Trao đổi với quản lý dự án</h3>
                 <p className="font-body text-sm text-muted-foreground">{event?.organizerUser?.displayName ?? "Chưa phân công"}</p>
               </div>
-              <div className="p-6 space-y-4 max-h-96 overflow-y-auto">
+              <div ref={messagesListRef} className="p-6 space-y-4 max-h-96 overflow-y-auto">
                 {messages.map(msg => {
                   const isMine = msg.senderUserId === user?.userId;
                   return (
@@ -434,7 +469,6 @@ const EventTracking = () => {
                     </motion.div>
                   );
                 })}
-                <div ref={messagesEndRef} />
               </div>
               <div className="p-4 bg-surface-low flex gap-3">
                 <input ref={chatFileInputRef} type="file" className="hidden" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" onChange={handleSendAttachment} />
@@ -482,15 +516,39 @@ const EventTracking = () => {
             </div>
             <div className="space-y-4">
               <h3 className="font-serif text-headline-md text-foreground">Lịch sử giao dịch</h3>
-              {transactions.map(tx => (
-                <div key={tx.id} className="flex items-center justify-between bg-surface-lowest rounded-xl p-5 shadow-ambient">
-                  <div><p className="font-body text-sm font-semibold text-foreground">{tx.description}</p><p className="font-body text-xs text-muted-foreground">{new Date(tx.transactionDate).toLocaleDateString("vi-VN")} - {tx.paymentMethod || "-"}</p></div>
-                  <div className="text-right"><p className="font-serif font-semibold text-foreground">{money(Number(tx.amount || 0))}</p><span className={`text-xs font-body font-semibold ${tx.status === "completed" ? "text-secondary" : "text-muted-foreground"}`}>{getTransactionStatusLabel(tx.status)}</span></div>
-                </div>
-              ))}
+              {transactions.map(tx => {
+                const canSelectTransaction = tx.status === "pending" && !tx.paymentMethod && Number(tx.amount || 0) > 0;
+                const isSelectedTransaction = paymentForm.transactionId === tx.id;
+
+                return (
+                  <div key={tx.id} className="flex flex-col gap-4 bg-surface-lowest rounded-xl p-5 shadow-ambient sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-body text-sm font-semibold text-foreground">{tx.description}</p>
+                      <p className="font-body text-xs text-muted-foreground">{new Date(tx.transactionDate).toLocaleDateString("vi-VN")} - {tx.paymentMethod || "-"}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
+                      <div className="text-left sm:text-right">
+                        <p className="font-serif font-semibold text-foreground">{money(Number(tx.amount || 0))}</p>
+                        <span className={`text-xs font-body font-semibold ${tx.status === "completed" ? "text-secondary" : "text-muted-foreground"}`}>{getTransactionStatusLabel(tx.status)}</span>
+                      </div>
+                      {canSelectTransaction && (
+                        <Button
+                          variant={isSelectedTransaction ? "outline" : "hero"}
+                          size="sm"
+                          onClick={() => selectPaymentTransaction(tx)}
+                          disabled={isSelectedTransaction}
+                        >
+                          <CreditCard size={14} className="mr-1" />
+                          {isSelectedTransaction ? "Đang chọn" : "Chọn thanh toán"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
               {transactions.length === 0 && <p className="font-body text-sm text-muted-foreground">Chưa có giao dịch cho sự kiện này.</p>}
             </div>
-            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient space-y-4">
+            <div ref={paymentFormRef} className="bg-surface-lowest rounded-xl p-5 shadow-ambient space-y-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-surface-low flex items-center justify-center">
                   <WalletCards size={18} className="text-primary" />
@@ -501,10 +559,17 @@ const EventTracking = () => {
                 </div>
               </div>
 
+              {selectedTransaction && (
+                <div className="rounded-lg bg-surface-low px-4 py-3">
+                  <p className="font-body text-sm font-semibold text-foreground">Đang chọn: {selectedTransaction.description}</p>
+                  <p className="font-body text-xs text-muted-foreground mt-1">Số tiền đợt này: {money(Number(selectedTransaction.amount || 0))}</p>
+                </div>
+              )}
+
               {contractSummaries.length > 0 && (
                 <div>
                   <label className="font-body text-sm text-foreground mb-1 block">Hợp đồng</label>
-                  <Select value={paymentForm.contractId || "none"} onValueChange={(value) => value !== "none" && selectPaymentContract(value)}>
+                  <Select value={paymentForm.contractId || "none"} onValueChange={(value) => value !== "none" && selectPaymentContract(value)} disabled={Boolean(selectedTransaction)}>
                     <SelectTrigger className="rounded-xl bg-surface-low border-none">
                       <SelectValue />
                     </SelectTrigger>
@@ -532,6 +597,7 @@ const EventTracking = () => {
                     max={paymentLimit || undefined}
                     value={paymentForm.amount}
                     onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))}
+                    disabled={Boolean(selectedTransaction)}
                     className="rounded-xl bg-surface-low border-none font-body"
                   />
                   <p className="font-body text-xs text-muted-foreground mt-2">Có thể thanh toán: {money(paymentLimit)}</p>

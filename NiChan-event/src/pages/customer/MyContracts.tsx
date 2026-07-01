@@ -83,29 +83,69 @@ const MyContracts = () => {
           {loading && <p className="font-body text-muted-foreground">Đang tải hợp đồng...</p>}
           {!loading && contracts.length === 0 && <p className="font-body text-muted-foreground">Chưa có hợp đồng nào.</p>}
           {contracts.map((contract, i) => (
-            <motion.div key={contract.id} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-surface-low flex items-center justify-center shrink-0"><FileText size={22} className="text-primary" /></div>
-                  <div>
-                    <h3 className="font-serif text-foreground font-semibold">{contract.event ? getEventDisplayName(contract.event) : "Hợp đồng"}</h3>
-                    <p className="font-body text-sm text-muted-foreground mt-1">Số HĐ: {contract.contractCode} - Phiên bản: {contract.currentVersion}</p>
-                    <p className="font-body text-sm text-muted-foreground">Ngày gửi: {contract.sentAt ? new Date(contract.sentAt).toLocaleDateString("vi-VN") : "-"}</p>
+            <motion.div
+              key={contract.id}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1 }}
+              className="bg-surface-lowest rounded-xl border border-border/60 p-5 shadow-ambient transition-shadow hover:shadow-ambient-lg md:p-6"
+            >
+              <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_220px] md:items-start">
+                <div className="flex min-w-0 items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-surface-low">
+                    <FileText size={22} className="text-primary" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="truncate font-serif font-semibold text-foreground">
+                      {contract.event ? getEventDisplayName(contract.event) : "Hợp đồng"}
+                    </h3>
+                    <p className="mt-1 font-body text-sm text-muted-foreground">
+                      Số HĐ: {contract.contractCode} - Phiên bản: {contract.currentVersion}
+                    </p>
+                    <p className="font-body text-sm text-muted-foreground">
+                      Ngày gửi: {contract.sentAt ? new Date(contract.sentAt).toLocaleDateString("vi-VN") : "-"}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="font-serif font-bold text-foreground">{money(contract.totalValue)}</p>
-                    <p className="font-body text-xs text-muted-foreground">Còn lại: {money(contractOutstanding(contract))}</p>
-                    <span className="inline-flex items-center gap-1 text-xs font-body font-semibold text-secondary"><CheckCircle size={12} /> {getContractStatusLabel(contract.status)}</span>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-2">
-                    {canPay(contract) && (
-                      <Button variant="hero" size="sm" onClick={() => openPayment(contract)}><CreditCard size={16} className="mr-1" /> Thanh toán</Button>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => openContract(contract)}><Eye size={16} className="mr-1" /> Xem</Button>
-                    <Button variant="hero" size="sm" onClick={() => openContract(contract)}><Download size={16} className="mr-1" /> Tải PDF</Button>
-                  </div>
+
+                <div className="md:border-l md:border-border md:pl-5 md:text-right">
+                  <p className="font-serif text-headline-md font-bold text-foreground">{money(contract.totalValue)}</p>
+                  <p className="mt-1 font-body text-xs text-muted-foreground">Còn lại: {money(contractOutstanding(contract))}</p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-secondary/10 px-3 py-1 font-body text-xs font-semibold text-secondary">
+                    <CheckCircle size={12} /> {getContractStatusLabel(contract.status)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-2 border-t border-border/70 pt-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                {canPay(contract) && (
+                  <Button
+                    variant="hero"
+                    size="sm"
+                    className="w-full rounded-xl sm:w-auto sm:min-w-[132px]"
+                    onClick={() => openPayment(contract)}
+                  >
+                    <CreditCard size={16} /> Thanh toán
+                  </Button>
+                )}
+                <div className="grid w-full grid-cols-2 gap-1 rounded-xl bg-surface-low p-1 sm:w-[232px]">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 rounded-lg px-3 text-muted-foreground hover:text-foreground"
+                    onClick={() => openContract(contract)}
+                  >
+                    <Eye size={16} /> Xem
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 rounded-lg px-3 text-muted-foreground hover:text-foreground"
+                    onClick={() => openContract(contract)}
+                  >
+                    <Download size={16} /> PDF
+                  </Button>
                 </div>
               </div>
             </motion.div>

@@ -207,6 +207,24 @@ export const getKanban = async (projectId: string, organizerUserId: string) => {
   return { project: event, columns };
 };
 
+export const getGantt = async (projectId: string, organizerUserId: string) => {
+  const kanban = await getKanban(projectId, organizerUserId);
+  const taskTime = (value?: Date | string | null) => {
+    const time = value ? new Date(value).getTime() : Number.NaN;
+    return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+  };
+
+  const items = kanban.columns
+    .flatMap((column) => column.tasks)
+    .sort((left, right) => {
+      const leftTime = Math.min(taskTime(left.dueAt), taskTime(left.createdAt));
+      const rightTime = Math.min(taskTime(right.dueAt), taskTime(right.createdAt));
+      return leftTime - rightTime || (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+    });
+
+  return { project: kanban.project, items };
+};
+
 const customerTrackingStatuses = ["contracted", "quoted", "planning", "in_progress", "completed"] as const;
 type CustomerTrackingStatus = (typeof customerTrackingStatuses)[number];
 

@@ -17,7 +17,10 @@ organizerBudgetRouter.use(authenticate, requireRole("organizer", "admin"));
 
 // GET /api/organizer/budgets/:projectId
 organizerBudgetRouter.get("/budgets/:projectId", async (req: Request, res: Response) => {
-  const data = await getProjectBudget(p(req, "projectId"));
+  const data = await getProjectBudget(p(req, "projectId"), {
+    userId: req.user!.userId,
+    role: req.user!.role,
+  });
   sendSuccess(res, { data });
 });
 
@@ -26,7 +29,10 @@ organizerBudgetRouter.post(
   "/budget-items",
   validate(budgetItemSchema),
   async (req: Request, res: Response) => {
-    const data = await createBudgetItem(req.body);
+    const data = await createBudgetItem(req.body, {
+      userId: req.user!.userId,
+      role: req.user!.role,
+    });
     sendSuccess(res, { data, status: 201 });
   },
 );
@@ -36,13 +42,19 @@ organizerBudgetRouter.put(
   "/budget-items/:id",
   validate(budgetItemSchema.partial()),
   async (req: Request, res: Response) => {
-    const data = await updateBudgetItem(p(req, "id"), req.body);
+    const data = await updateBudgetItem(p(req, "id"), req.body, {
+      userId: req.user!.userId,
+      role: req.user!.role,
+    });
     sendSuccess(res, { data });
   },
 );
 
 // DELETE /api/organizer/budget-items/:id
 organizerBudgetRouter.delete("/budget-items/:id", async (req: Request, res: Response) => {
-  await deleteBudgetItem(p(req, "id"));
+  await deleteBudgetItem(p(req, "id"), {
+    userId: req.user!.userId,
+    role: req.user!.role,
+  });
   sendSuccess(res, { data: { deleted: true } });
 });

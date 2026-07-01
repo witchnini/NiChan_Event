@@ -12,6 +12,7 @@ import {
 import {
   createTask,
   deleteTask,
+  getGantt,
   getKanban,
   getOrganizerContractById,
   getOrganizerProjectById,
@@ -35,6 +36,12 @@ organizerProjectsRouter.get("/projects", async (req: Request, res: Response) => 
 // GET /api/organizer/projects/:projectId/kanban
 organizerProjectsRouter.get("/projects/:projectId/kanban", async (req: Request, res: Response) => {
   const data = await getKanban(p(req, "projectId"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/organizer/projects/:projectId/gantt
+organizerProjectsRouter.get("/projects/:projectId/gantt", async (req: Request, res: Response) => {
+  const data = await getGantt(p(req, "projectId"), req.user!.userId);
   sendSuccess(res, { data });
 });
 

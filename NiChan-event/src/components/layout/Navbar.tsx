@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Menu, X, LogOut, User, ChevronDown, Mail, Settings, Shield, LayoutDashboard, Sparkles } from "lucide-react";
+import { Menu, X, LogOut, User, ChevronDown, Mail, Settings, Shield, LayoutDashboard, Sparkles, Bell } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { getServiceCategories, type PublicServiceCategory } from "@/services/api";
+import { apiClient } from "@/services/apiClient";
+import { getSocket } from "@/services/socket";
+import { toast } from "sonner";
 
 const navLinks = [
   { label: "Trang chủ", path: "/" },
@@ -28,14 +31,34 @@ const roleLabels = {
   customer: "Khách hàng",
 } as const;
 
+type CustomerNotification = {
+  id: string;
+  title?: string | null;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+};
+
+const formatNotificationTime = (value: string) =>
+  new Date(value).toLocaleString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+  });
+
 const Navbar = () => {
   const { user, isAuthenticated, logout } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
   const [serviceDropdownOpen, setServiceDropdownOpen] = useState(false);
   const [mobileServiceOpen, setMobileServiceOpen] = useState(false);
   const [serviceCategories, setServiceCategories] = useState<PublicServiceCategory[]>([]);
   const profileRef = useRef<HTMLDivElement>(null);
+  const desktopNotificationRef = useRef<HTMLDivElement>(null);
+  const mobileNotificationRef = useRef<HTMLDivElement>(null);
   const serviceDropdownRef = useRef<HTMLDivElement>(null);
   const serviceDropdownTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
@@ -49,6 +72,11 @@ const Navbar = () => {
     currentRole === "customer" ? "/dashboard/ho-so" : currentRole === "admin" ? "/admin/ho-so" : currentRole === "organizer" ? "/ban-to-chuc/ho-so" : "/";
 
   const links = isCustomerRoute ? customerLinks : navLinks;
+  const isCustomerUser = currentRole === "customer";
+  const unreadNotifications = useMemo(
+    () => notifications.filter((notification) => !notification.isRead),
+    [notifications],
+  );
 
   // Fetch service categories once
   useEffect(() => {
@@ -70,22 +98,71 @@ const Navbar = () => {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
         setProfileOpen(false);
       }
+      const isInsideNotification =
+        desktopNotificationRef.current?.contains(e.target as Node) ||
+        mobileNotificationRef.current?.contains(e.target as Node);
+      if (!isInsideNotification) {
+        setNotifOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated || !isCustomerUser) {
+      setNotifications([]);
+      setNotifOpen(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadNotifications = async () => {
+      try {
+        const data = await apiClient.get<CustomerNotification[]>("/customer/notifications", {
+          pageSize: 20,
+        });
+        if (!cancelled) setNotifications(data);
+      } catch {
+        if (!cancelled) setNotifications([]);
+      }
+    };
+
+    void loadNotifications();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, isCustomerUser, user?.userId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isCustomerUser) return;
+
+    const socket = getSocket();
+    const handleNotification = (payload: {
+      id: string;
+      title?: string | null;
+      message: string;
+      createdAt: string;
+    }) => {
+      setNotifications((prev) => (
+        prev.some((notification) => notification.id === payload.id)
+          ? prev
+          : [{ ...payload, isRead: false }, ...prev]
+      ));
+    };
+
+    socket.on("notification", handleNotification);
+    return () => {
+      socket.off("notification", handleNotification);
+    };
+  }, [isAuthenticated, isCustomerUser, user?.userId]);
+
   // Close dropdown when navigating
   useEffect(() => {
     setServiceDropdownOpen(false);
     setMobileServiceOpen(false);
+    setNotifOpen(false);
   }, [location.pathname]);
-
-  const handleLogout = async () => {
-    setProfileOpen(false);
-    setIsOpen(false);
-    await logout();
-  };
 
   const handleServiceMouseEnter = () => {
     if (serviceDropdownTimeout.current) {
@@ -101,7 +178,91 @@ const Navbar = () => {
     }, 150);
   };
 
+  const markNotificationAsRead = async (id: string) => {
+    setNotifications((prev) => prev.map((notification) => (
+      notification.id === id ? { ...notification, isRead: true } : notification
+    )));
+
+    try {
+      await apiClient.patch(`/customer/notifications/${id}/read`);
+    } catch {
+      toast.error("Không thể cập nhật trạng thái thông báo");
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    const unreadIds = unreadNotifications.map((notification) => notification.id);
+    if (unreadIds.length === 0) return;
+
+    setNotifications((prev) => prev.map((notification) => ({ ...notification, isRead: true })));
+
+    try {
+      await Promise.all(unreadIds.map((id) => apiClient.patch(`/customer/notifications/${id}/read`)));
+      toast.success("Đã đánh dấu tất cả là đã đọc");
+    } catch {
+      toast.error("Không thể cập nhật tất cả thông báo");
+    }
+  };
+
+  const handleLogout = async () => {
+    setProfileOpen(false);
+    setNotifOpen(false);
+    setIsOpen(false);
+    await logout();
+  };
+
   const avatarText = user?.displayName?.trim()?.charAt(0)?.toUpperCase() || "U";
+  const renderNotificationDropdown = (panelClassName: string) => (
+    <AnimatePresence>
+      {notifOpen && (
+        <motion.div
+          initial={{ opacity: 0, y: 8, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, scale: 0.96 }}
+          transition={{ duration: 0.15 }}
+          className={panelClassName}
+        >
+          <div className="flex items-center justify-between p-4 bg-surface-low">
+            <h3 className="font-serif font-semibold text-foreground text-sm">Thông báo</h3>
+            {unreadNotifications.length > 0 && (
+              <button onClick={markAllNotificationsRead} className="font-body text-xs text-primary hover:underline">
+                Đánh dấu tất cả
+              </button>
+            )}
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {notifications.map((notification) => (
+              <button
+                key={notification.id}
+                onClick={() => markNotificationAsRead(notification.id)}
+                className={`w-full text-left p-4 border-b border-border hover:bg-surface-low transition-colors ${!notification.isRead ? "bg-primary/5" : ""}`}
+              >
+                <div className="flex items-start gap-3">
+                  {!notification.isRead && <span className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />}
+                  <div className={!notification.isRead ? "" : "ml-5"}>
+                    {notification.title && (
+                      <p className={`font-body text-xs mb-1 ${!notification.isRead ? "text-primary font-semibold" : "text-muted-foreground"}`}>
+                        {notification.title}
+                      </p>
+                    )}
+                    <p className={`font-body text-sm ${!notification.isRead ? "text-foreground font-semibold" : "text-muted-foreground"}`}>
+                      {notification.message}
+                    </p>
+                    <p className="font-body text-xs text-muted-foreground mt-1">
+                      {formatNotificationTime(notification.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            ))}
+            {notifications.length === 0 && (
+              <p className="p-4 font-body text-sm text-muted-foreground">Chưa có thông báo.</p>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
@@ -219,9 +380,32 @@ const Navbar = () => {
 
         {isAuthenticated && user ? (
           <div className="hidden lg:flex items-center gap-3">
+            {isCustomerUser && (
+              <div className="relative" ref={desktopNotificationRef}>
+                <button
+                  onClick={() => {
+                    setNotifOpen((open) => !open);
+                    setProfileOpen(false);
+                  }}
+                  className="relative flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground hover:bg-surface-low hover:text-foreground transition-all"
+                  aria-label="Thông báo"
+                >
+                  <Bell size={20} />
+                  {unreadNotifications.length > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full gradient-primary text-primary-foreground text-[10px] flex items-center justify-center font-bold">
+                      {unreadNotifications.length}
+                    </span>
+                  )}
+                </button>
+                {renderNotificationDropdown("absolute right-0 top-full mt-2 w-80 bg-background rounded-2xl shadow-ambient-lg border border-border overflow-hidden z-50")}
+              </div>
+            )}
             <div className="relative" ref={profileRef}>
               <button
-                onClick={() => setProfileOpen(!profileOpen)}
+                onClick={() => {
+                  setProfileOpen(!profileOpen);
+                  setNotifOpen(false);
+                }}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-surface-low transition-all"
               >
                 <div className="w-9 h-9 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-body font-bold text-sm">
@@ -313,9 +497,31 @@ const Navbar = () => {
           </div>
         )}
 
-        <button onClick={() => setIsOpen(!isOpen)} className="lg:hidden text-foreground">
-          {isOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
+        <div className="flex items-center gap-2 lg:hidden">
+          {isAuthenticated && user && isCustomerUser && (
+            <div className="relative" ref={mobileNotificationRef}>
+              <button
+                onClick={() => {
+                  setNotifOpen((open) => !open);
+                  setIsOpen(false);
+                }}
+                className="relative flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground hover:bg-surface-low hover:text-foreground transition-all"
+                aria-label="Thông báo"
+              >
+                <Bell size={20} />
+                {unreadNotifications.length > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full gradient-primary text-primary-foreground text-[10px] flex items-center justify-center font-bold">
+                    {unreadNotifications.length}
+                  </span>
+                )}
+              </button>
+              {renderNotificationDropdown("absolute right-0 top-full mt-2 w-[min(calc(100vw-2rem),20rem)] bg-background rounded-2xl shadow-ambient-lg border border-border overflow-hidden z-50")}
+            </div>
+          )}
+          <button onClick={() => { setIsOpen(!isOpen); setNotifOpen(false); }} className="text-foreground">
+            {isOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+        </div>
       </div>
 
       <AnimatePresence>
