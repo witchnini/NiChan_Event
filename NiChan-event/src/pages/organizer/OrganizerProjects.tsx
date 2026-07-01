@@ -10,7 +10,9 @@ import {
   Edit2,
   Eye,
   ListChecks,
+  Mail,
   Milestone,
+  Phone,
   PlayCircle,
   Plus,
   Search,
@@ -33,7 +35,13 @@ import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { eventStatusLabels, eventStatusColors, eventStatusFilters, getEventStatusLabel } from "@/lib/eventDisplay";
+import {
+  eventStatusLabels,
+  eventStatusColors,
+  eventStatusFilters,
+  getEventStatusLabel,
+  getMilestoneTitleLabel,
+} from "@/lib/eventDisplay";
 import ContractPdfButton from "@/components/features/contracts/ContractPdfButton";
 import { type FullContract } from "@/components/features/contracts/ContractDocument";
 
@@ -97,10 +105,14 @@ type StaffOption = {
   email?: string | null;
   phone?: string | null;
   avatarUrl?: string | null;
+  projectCount?: number;
+  activeProjectCount?: number;
+  completedProjectCount?: number;
   staffProfile?: {
     fullName?: string | null;
     jobTitle?: string | null;
     employmentStatus?: string | null;
+    address?: string | null;
   } | null;
 };
 
@@ -252,6 +264,14 @@ const emptyVendorEditorForm = {
 };
 const NO_VENDOR = "none";
 const isValidPhone = (value: string) => !value || /^0[3-9]\d{8}$/.test(value);
+
+const staffEmploymentLabel = (status?: string | null) =>
+  status === "inactive" ? "Tạm nghỉ" : "Đang làm việc";
+
+const staffEmploymentClass = (status?: string | null) =>
+  status === "inactive"
+    ? "bg-destructive/10 text-destructive"
+    : "bg-secondary/10 text-secondary";
 
 const taskStatusLabel: Record<string, string> = {
   todo: "Chờ xử lý",
@@ -576,6 +596,7 @@ const OrganizerProjects = () => {
   const [staffDialogOpen, setStaffDialogOpen] = useState(false);
   const [staffListOpen, setStaffListOpen] = useState(false);
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
+  const [viewStaffItem, setViewStaffItem] = useState<StaffOption | null>(null);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
   const [customTaskMode, setCustomTaskMode] = useState(false);
   const [taskTemplateSearch, setTaskTemplateSearch] = useState("");
@@ -1305,6 +1326,7 @@ const OrganizerProjects = () => {
       roleText: person.staffProfile?.jobTitle ?? "",
       status: "invited",
     });
+    setViewStaffItem(null);
     setStaffListOpen(false);
     setStaffDialogOpen(true);
   };
@@ -1583,7 +1605,9 @@ const OrganizerProjects = () => {
                           {taskStatusLabel[milestone.status] ?? milestone.status}
                         </span>
                       </div>
-                      <p className="font-body text-sm font-semibold text-foreground mt-3">{milestone.title}</p>
+                      <p className="font-body text-sm font-semibold text-foreground mt-3">
+                        {getMilestoneTitleLabel(milestone.title)}
+                      </p>
                       <p className="font-body text-xs text-muted-foreground mt-1">{formatDate(milestone.milestoneDate)}</p>
                     </div>
                   ))}
@@ -1939,6 +1963,7 @@ const OrganizerProjects = () => {
                     className="rounded-xl"
                     onClick={() => {
                       setStaffSearch("");
+                      setViewStaffItem(null);
                       setStaffListOpen(true);
                     }}
                   >
@@ -2647,12 +2672,18 @@ const OrganizerProjects = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={staffListOpen} onOpenChange={setStaffListOpen}>
-        <DialogContent className="sm:max-w-2xl">
+      <Dialog
+        open={staffListOpen}
+        onOpenChange={(open) => {
+          setStaffListOpen(open);
+          if (!open) setViewStaffItem(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle className="font-serif">Tất cả nhân sự</DialogTitle>
             <DialogDescription>
-              Xem và chọn nhân sự để phân công vào dự án đang mở.
+              Xem thông tin và chọn nhân sự để phân công vào dự án đang mở.
             </DialogDescription>
           </DialogHeader>
 
@@ -2669,43 +2700,94 @@ const OrganizerProjects = () => {
           <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
             {filteredStaffCatalog.map((person) => {
               const assigned = projectStaff.some((assignment) => assignment.staffUser.id === person.id);
+              const expanded = viewStaffItem?.id === person.id;
+              const displayName = person.staffProfile?.fullName || person.displayName;
+              const employmentStatus = person.staffProfile?.employmentStatus;
+              const activeProjectCount = person.activeProjectCount ?? 0;
+              const completedProjectCount = person.completedProjectCount ?? 0;
+              const projectCount = person.projectCount ?? activeProjectCount + completedProjectCount;
 
               return (
                 <div
                   key={person.id}
-                  className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="rounded-xl border border-border bg-background p-4"
                 >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-primary">
-                      {person.avatarUrl ? (
-                        <img src={person.avatarUrl} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <UserRound size={18} />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate font-body text-sm font-semibold text-foreground">
-                          {person.staffProfile?.fullName || person.displayName}
-                        </p>
-                        <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-secondary">
-                          Đang làm việc
-                        </span>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-primary">
+                        {person.avatarUrl ? (
+                          <img src={person.avatarUrl} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <UserRound size={18} />
+                        )}
                       </div>
-                      <p className="mt-1 font-body text-xs text-muted-foreground">
-                        {person.staffProfile?.jobTitle || "Chưa có vai trò"} · {person.phone || person.email || "Chưa có liên hệ"}
-                      </p>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate font-body text-sm font-semibold text-foreground">
+                            {displayName}
+                          </p>
+                          <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${staffEmploymentClass(employmentStatus)}`}>
+                            {staffEmploymentLabel(employmentStatus)}
+                          </span>
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-primary">
+                            {activeProjectCount} đang làm
+                          </span>
+                          <span className="rounded-full bg-surface-high px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                            {completedProjectCount} đã làm
+                          </span>
+                        </div>
+                        <p className="mt-1 font-body text-xs text-muted-foreground">
+                          {person.staffProfile?.jobTitle || "Chưa có vai trò"} · {person.phone || person.email || "Chưa có liên hệ"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => setViewStaffItem(expanded ? null : person)}
+                      >
+                        <Eye size={14} /> {expanded ? "Ẩn thông tin" : "Thông tin"}
+                      </Button>
+                      <Button
+                        variant={assigned ? "outline" : "hero"}
+                        size="sm"
+                        className="rounded-xl"
+                        disabled={assigned}
+                        onClick={() => openAssignStaffFromList(person)}
+                      >
+                        {assigned ? "Đã phân công" : "Chọn nhân sự"}
+                      </Button>
                     </div>
                   </div>
-                  <Button
-                    variant={assigned ? "outline" : "hero"}
-                    size="sm"
-                    className="shrink-0 rounded-xl"
-                    disabled={assigned}
-                    onClick={() => openAssignStaffFromList(person)}
-                  >
-                    {assigned ? "Đã phân công" : "Chọn nhân sự"}
-                  </Button>
+
+                  {expanded && (
+                    <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2 lg:grid-cols-4">
+                      <Info label="Họ tên" value={displayName} />
+                      <Info label="Vai trò" value={person.staffProfile?.jobTitle || "Chưa cập nhật"} />
+                      <Info label="Trạng thái" value={staffEmploymentLabel(employmentStatus)} />
+                      <Info label="Đang làm" value={`${activeProjectCount} dự án`} />
+                      <Info label="Đã làm" value={`${completedProjectCount} dự án`} />
+                      <Info label="Tổng đã & đang làm" value={`${projectCount} dự án`} />
+                      <div className="rounded-lg bg-surface-low p-3">
+                        <p className="flex items-center gap-1.5 font-body text-xs text-muted-foreground">
+                          <Phone size={12} /> Số điện thoại
+                        </p>
+                        <p className="mt-1 break-words font-body text-sm font-semibold text-foreground">
+                          {person.phone || "Chưa cập nhật"}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-surface-low p-3 sm:col-span-2">
+                        <p className="flex items-center gap-1.5 font-body text-xs text-muted-foreground">
+                          <Mail size={12} /> Email
+                        </p>
+                        <p className="mt-1 break-all font-body text-sm font-semibold text-foreground">
+                          {person.email || "Chưa cập nhật"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

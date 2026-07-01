@@ -32,7 +32,7 @@ const addDays = (value: Date, days: number) => {
 
 const defaultMilestones = (eventDate?: Date | null) => [
   {
-    title: "Kickoff dự án",
+    title: "Khởi động dự án",
     description: "Thông tin sự kiện đã sẵn sàng để khách hàng theo dõi.",
     milestoneDate: null,
     status: "done",

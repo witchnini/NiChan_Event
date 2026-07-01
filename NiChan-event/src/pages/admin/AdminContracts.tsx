@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Calculator,
+  ClipboardList,
   Edit2,
   Eye,
   FileText,
@@ -89,6 +90,13 @@ type Project = {
   name: string;
   type: string;
   customerUser?: { id: string; displayName: string } | null;
+  consultationRequest?: {
+    id?: string;
+    requestCode?: string;
+    customerName?: string | null;
+    eventType?: string | null;
+    note?: string | null;
+  } | null;
 };
 
 type BudgetItem = {
@@ -101,6 +109,21 @@ type BudgetItem = {
 
 type BudgetResponse = {
   items: BudgetItem[];
+};
+
+type ServiceCatalogItem = {
+  id: string;
+  title: string;
+  shortDescription?: string | null;
+  category?: { id?: string; name?: string | null; slug?: string | null } | null;
+};
+
+type ServiceCategoryItem = {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  isActive?: boolean;
 };
 
 type LineItemForm = {
@@ -170,6 +193,24 @@ const unitOptions = [
   "tháng",
 ];
 
+const AUTO_SERVICE_VALUE = "__auto_service__";
+const SERVICE_CATEGORY_VALUE_PREFIX = "__service_category__:";
+const MANUAL_TEMPLATE_VALUE = "__manual_template__";
+
+type ContractLineItemTemplate = {
+  id: string;
+  category: string;
+  description: string;
+  unit: string;
+};
+
+type ContractLineItemTemplateGroup = {
+  id: string;
+  label: string;
+  keywords: string[];
+  items: ContractLineItemTemplate[];
+};
+
 const normalizeText = (value: string) =>
   value
     .normalize("NFD")
@@ -177,6 +218,456 @@ const normalizeText = (value: string) =>
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D")
     .toLowerCase();
+
+const commonLineItemTemplates: ContractLineItemTemplate[] = [
+  {
+    id: "common-project-management",
+    category: "Quản lý dự án & điều phối tổng thể",
+    description: "Lập kế hoạch triển khai, điều phối nhân sự, nhà cung cấp và kiểm soát tiến độ trước - trong - sau sự kiện.",
+    unit: "gói",
+  },
+  {
+    id: "common-concept-script",
+    category: "Thiết kế concept & kịch bản chương trình",
+    description: "Xây dựng ý tưởng chủ đạo, moodboard, timeline chi tiết và kịch bản điều phối phù hợp mục tiêu sự kiện.",
+    unit: "gói",
+  },
+  {
+    id: "common-onsite-operation",
+    category: "Vận hành onsite",
+    description: "Bố trí đội ngũ điều phối tại hiện trường, kiểm tra checklist vận hành và xử lý phát sinh trong ngày diễn ra.",
+    unit: "buổi",
+  },
+];
+
+const contractLineItemTemplateGroups: ContractLineItemTemplateGroup[] = [
+  {
+    id: "wedding",
+    label: "Tiệc cưới",
+    keywords: ["tiệc cưới", "dam cuoi", "wedding", "cuoi", "le cuoi"],
+    items: [
+      {
+        id: "wedding-planning",
+        category: "Lập kế hoạch & điều phối tiệc cưới",
+        description: "Tư vấn lịch trình, phân bổ đầu việc, điều phối gia đình hai bên và giám sát toàn bộ timeline ngày cưới.",
+        unit: "gói",
+      },
+      {
+        id: "wedding-decoration",
+        category: "Trang trí cổng hoa, sân khấu & bàn gallery",
+        description: "Thiết kế và thi công khu vực đón khách, backdrop, sân khấu, lối đi và bàn gallery theo concept đã duyệt.",
+        unit: "gói",
+      },
+      {
+        id: "wedding-av",
+        category: "Âm thanh, ánh sáng & màn hình",
+        description: "Cung cấp hệ thống âm thanh, ánh sáng sân khấu, màn hình trình chiếu và kỹ thuật viên vận hành trong tiệc.",
+        unit: "buổi",
+      },
+      {
+        id: "wedding-catering",
+        category: "Thực đơn tiệc cưới",
+        description: "Phục vụ thực đơn tiệc theo số lượng khách, bao gồm set menu, đồ uống cơ bản và nhân sự phục vụ tại bàn.",
+        unit: "suất",
+      },
+      {
+        id: "wedding-media",
+        category: "Chụp ảnh & quay phim cưới",
+        description: "Ghi lại khoảnh khắc lễ cưới, tiệc đãi khách và bàn giao bộ ảnh/video highlight sau chương trình.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "birthday",
+    label: "Sinh nhật",
+    keywords: ["sinh nhật", "birthday", "sinh nhat"],
+    items: [
+      {
+        id: "birthday-concept",
+        category: "Concept & trang trí sinh nhật",
+        description: "Thiết kế chủ đề, phối màu, backdrop, bàn gallery và các chi tiết trang trí phù hợp nhân vật chính.",
+        unit: "gói",
+      },
+      {
+        id: "birthday-entertainment",
+        category: "MC, hoạt náo & trò chơi",
+        description: "Dẫn dắt chương trình, tổ chức mini game và kết nối khách mời theo không khí thân mật của buổi tiệc.",
+        unit: "buổi",
+      },
+      {
+        id: "birthday-catering",
+        category: "Tea break, bánh & đồ uống",
+        description: "Chuẩn bị bánh sinh nhật, finger food, nước uống và khu vực phục vụ phù hợp quy mô khách mời.",
+        unit: "suất",
+      },
+      {
+        id: "birthday-media",
+        category: "Chụp ảnh tiệc sinh nhật",
+        description: "Ghi lại khoảnh khắc khai tiệc, thổi nến, giao lưu và các hoạt động chính của buổi sinh nhật.",
+        unit: "buổi",
+      },
+    ],
+  },
+  {
+    id: "anniversary",
+    label: "Kỷ niệm",
+    keywords: ["kỷ niệm", "ky niem", "anniversary", "le ky niem"],
+    items: [
+      {
+        id: "anniversary-script",
+        category: "Kịch bản lễ kỷ niệm",
+        description: "Xây dựng timeline nghi thức, phát biểu, vinh danh và các điểm nhấn cảm xúc xuyên suốt chương trình.",
+        unit: "gói",
+      },
+      {
+        id: "anniversary-stage",
+        category: "Sân khấu, backdrop & khu vực check-in",
+        description: "Thiết kế nhận diện không gian sự kiện, thi công sân khấu, backdrop, standee và khu vực đón khách.",
+        unit: "gói",
+      },
+      {
+        id: "anniversary-performance",
+        category: "Nghi thức & tiết mục biểu diễn",
+        description: "Tổ chức phần nghi thức, tiết mục văn nghệ, trình chiếu hình ảnh và các hoạt động tri ân khách mời.",
+        unit: "buổi",
+      },
+      {
+        id: "anniversary-media",
+        category: "Truyền thông hình ảnh sự kiện",
+        description: "Chụp ảnh, quay phim, dựng highlight và bàn giao tư liệu truyền thông sau chương trình.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "conference",
+    label: "Hội nghị & hội thảo",
+    keywords: ["hội nghị", "hội thảo", "hoi nghi", "hoi thao", "conference", "seminar", "workshop", "doanh nghiep"],
+    items: [
+      {
+        id: "conference-venue",
+        category: "Địa điểm & setup phòng họp",
+        description: "Bố trí không gian hội nghị, sơ đồ chỗ ngồi, bàn ghế, biển tên và khu vực tiếp đón theo layout đã duyệt.",
+        unit: "buổi",
+      },
+      {
+        id: "conference-equipment",
+        category: "Thiết bị trình chiếu & âm thanh hội nghị",
+        description: "Cung cấp máy chiếu/màn LED, micro, loa, clicker, đường truyền kỹ thuật và nhân sự vận hành thiết bị.",
+        unit: "buổi",
+      },
+      {
+        id: "conference-checkin",
+        category: "Check-in, lễ tân & tài liệu khách mời",
+        description: "Chuẩn bị danh sách khách, QR/check-in, tài liệu, bảng tên và đội ngũ lễ tân hỗ trợ khách tham dự.",
+        unit: "gói",
+      },
+      {
+        id: "conference-catering",
+        category: "Tea break & phục vụ hội nghị",
+        description: "Sắp xếp tea break, nước uống, khu vực phục vụ và nhân sự hỗ trợ trong các khoảng nghỉ chương trình.",
+        unit: "suất",
+      },
+      {
+        id: "conference-livestream",
+        category: "Livestream & ghi hình hội nghị",
+        description: "Thiết lập ghi hình/livestream, thu âm nội dung chính và bàn giao file tư liệu sau chương trình.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "groundbreaking",
+    label: "Động thổ & khởi công",
+    keywords: ["động thổ", "khởi công", "dong tho", "khoi cong", "groundbreaking", "construction"],
+    items: [
+      {
+        id: "groundbreaking-layout",
+        category: "Mặt bằng nghi lễ & khu vực đón khách",
+        description: "Khảo sát mặt bằng, bố trí sơ đồ nghi lễ, khu vực khách mời, lối di chuyển và điểm đặt vật phẩm nghi thức.",
+        unit: "gói",
+      },
+      {
+        id: "groundbreaking-tent-stage",
+        category: "Nhà bạt, sân khấu & backdrop khởi công",
+        description: "Thi công nhà bạt, sân khấu, backdrop, thảm, bục nghi thức và nhận diện thương hiệu tại khu vực tổ chức.",
+        unit: "gói",
+      },
+      {
+        id: "groundbreaking-ritual",
+        category: "Bộ nghi thức động thổ",
+        description: "Chuẩn bị xẻng, cát, mâm nghi thức, băng khánh thành và đạo cụ phục vụ phần lễ khởi công.",
+        unit: "bộ",
+      },
+      {
+        id: "groundbreaking-av",
+        category: "Âm thanh, ánh sáng ngoài trời",
+        description: "Cung cấp hệ thống âm thanh, micro, nguồn điện kỹ thuật và đội ngũ vận hành phù hợp không gian ngoài trời.",
+        unit: "buổi",
+      },
+      {
+        id: "groundbreaking-reception",
+        category: "Lễ tân & điều phối khách mời",
+        description: "Bố trí nhân sự hướng dẫn, đón tiếp đại biểu, ổn định vị trí và điều phối luồng khách trong phần nghi lễ.",
+        unit: "người",
+      },
+    ],
+  },
+  {
+    id: "opening",
+    label: "Khai trương",
+    keywords: ["khai trương", "khai truong", "opening", "grand opening", "showroom"],
+    items: [
+      {
+        id: "opening-gate-backdrop",
+        category: "Cổng chào, backdrop & khu vực khai trương",
+        description: "Thiết kế và thi công cổng chào, backdrop, standee, khu vực check-in và nhận diện thương hiệu tại điểm mở bán.",
+        unit: "gói",
+      },
+      {
+        id: "opening-ribbon",
+        category: "Nghi thức cắt băng khai trương",
+        description: "Chuẩn bị bộ cắt băng, khay kéo, hoa cài, cue nghi thức và điều phối đại biểu tham gia phần lễ.",
+        unit: "bộ",
+      },
+      {
+        id: "opening-performance",
+        category: "Múa lân, trống hội & tiết mục chào mừng",
+        description: "Tổ chức tiết mục khai màn tạo không khí, thu hút khách mời và tăng điểm nhấn cho thời khắc khai trương.",
+        unit: "buổi",
+      },
+      {
+        id: "opening-av",
+        category: "Âm thanh, ánh sáng khai trương",
+        description: "Cung cấp loa, micro, mixer, ánh sáng cơ bản và kỹ thuật viên vận hành trong suốt chương trình.",
+        unit: "buổi",
+      },
+      {
+        id: "opening-media",
+        category: "Chụp ảnh, quay phim & tư liệu truyền thông",
+        description: "Ghi lại nghi thức khai trương, khách mời, không gian thương hiệu và bàn giao tư liệu truyền thông sau sự kiện.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "inauguration",
+    label: "Khánh thành",
+    keywords: ["khánh thành", "khanh thanh", "inauguration", "ribbon cutting"],
+    items: [
+      {
+        id: "inauguration-ceremony",
+        category: "Kịch bản nghi thức khánh thành",
+        description: "Xây dựng trình tự nghi lễ, phát biểu, cắt băng/mở bảng và điều phối khách mời VIP theo timeline.",
+        unit: "gói",
+      },
+      {
+        id: "inauguration-stage",
+        category: "Sân khấu, backdrop & nhận diện công trình",
+        description: "Thi công sân khấu, backdrop, bảng tên, thảm đỏ và các hạng mục nhận diện cho khu vực khánh thành.",
+        unit: "gói",
+      },
+      {
+        id: "inauguration-av",
+        category: "Âm thanh, ánh sáng & kỹ thuật",
+        description: "Cung cấp hệ thống âm thanh, micro, ánh sáng, nguồn điện và kỹ thuật viên trực chương trình.",
+        unit: "buổi",
+      },
+      {
+        id: "inauguration-reception",
+        category: "Lễ tân, đón tiếp & quà lưu niệm",
+        description: "Bố trí nhân sự đón khách, khu vực ký tên, hướng dẫn chỗ ngồi và chuẩn bị quà lưu niệm theo danh sách.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "gala",
+    label: "Gala Dinner",
+    keywords: [
+      "gala",
+      "gala dinner",
+      "dinner",
+      "tiệc gala",
+      "tiec gala",
+      "tri ân khách hàng",
+      "tri an khach hang",
+      "tri ân",
+      "tri an",
+      "khách hàng",
+      "khach hang",
+      "customer appreciation",
+      "client appreciation",
+    ],
+    items: [
+      {
+        id: "gala-concept",
+        category: "Concept & kịch bản Gala Dinner",
+        description: "Xây dựng chủ đề, flow chương trình, nghi thức khai tiệc, vinh danh và các điểm nhấn giải trí trong đêm gala.",
+        unit: "gói",
+      },
+      {
+        id: "gala-stage-led",
+        category: "Sân khấu, LED, âm thanh & ánh sáng",
+        description: "Thiết kế sân khấu, màn LED, hệ thống âm thanh ánh sáng và nhân sự kỹ thuật vận hành đêm tiệc.",
+        unit: "gói",
+      },
+      {
+        id: "gala-mc-artist",
+        category: "MC, nghệ sĩ & tiết mục biểu diễn",
+        description: "Sắp xếp MC, ca sĩ/nhóm biểu diễn, rehearsal và điều phối tiết mục theo kịch bản đã duyệt.",
+        unit: "buổi",
+      },
+      {
+        id: "gala-banquet",
+        category: "Tiệc, đồ uống & phục vụ bàn",
+        description: "Phối hợp thực đơn, set bàn, đồ uống và nhân sự phục vụ trong suốt thời lượng Gala Dinner.",
+        unit: "suất",
+      },
+      {
+        id: "gala-awards",
+        category: "Vinh danh, trao giải & bốc thăm",
+        description: "Chuẩn bị hạng mục trao giải, slide vinh danh, đạo cụ sân khấu và điều phối bốc thăm/trao quà.",
+        unit: "gói",
+      },
+    ],
+  },
+  {
+    id: "year-end-party",
+    label: "Year End Party",
+    keywords: ["year end party", "year-end", "tất niên", "tat nien", "cuối năm", "cuoi nam", "yep"],
+    items: [
+      {
+        id: "yep-concept",
+        category: "Concept & kịch bản Year End Party",
+        description: "Xây dựng chủ đề tiệc cuối năm, timeline tổng kết, vinh danh, giải trí và hoạt động gắn kết nội bộ.",
+        unit: "gói",
+      },
+      {
+        id: "yep-stage",
+        category: "Sân khấu, backdrop & photobooth",
+        description: "Thiết kế sân khấu, backdrop, khu vực chụp hình, nhận diện doanh nghiệp và không gian check-in.",
+        unit: "gói",
+      },
+      {
+        id: "yep-av",
+        category: "Âm thanh, ánh sáng & LED",
+        description: "Cung cấp hệ thống âm thanh ánh sáng, màn LED/trình chiếu và kỹ thuật viên vận hành chương trình.",
+        unit: "buổi",
+      },
+      {
+        id: "yep-mc-performance",
+        category: "MC, nghệ sĩ & game sân khấu",
+        description: "Dẫn dắt chương trình, tổ chức game, tiết mục biểu diễn và kết nối khách mời trong đêm tiệc.",
+        unit: "buổi",
+      },
+      {
+        id: "yep-banquet",
+        category: "Tiệc cuối năm & đồ uống",
+        description: "Phối hợp thực đơn tiệc, đồ uống, setup bàn và nhân sự phục vụ theo số lượng nhân sự tham dự.",
+        unit: "suất",
+      },
+    ],
+  },
+];
+
+const mergeLineItemTemplates = (templates: ContractLineItemTemplate[]) => {
+  const seen = new Set<string>();
+  return templates.filter((template) => {
+    if (seen.has(template.id)) return false;
+    seen.add(template.id);
+    return true;
+  });
+};
+
+const scoreTemplateGroup = (contextText: string, group: ContractLineItemTemplateGroup) => {
+  const normalizedContext = normalizeText(contextText);
+  return group.keywords.reduce((score, keyword) => {
+    const normalizedKeyword = normalizeText(keyword);
+    if (!normalizedKeyword || !normalizedContext.includes(normalizedKeyword)) return score;
+    return score + (normalizedKeyword.includes(" ") ? 3 : 1);
+  }, 0);
+};
+
+const getBestTemplateGroup = (contextText: string) =>
+  contractLineItemTemplateGroups
+    .map((group) => ({ group, score: scoreTemplateGroup(contextText, group) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.group;
+
+const getSuggestedLineItemTemplates = (contextText: string) => {
+  const normalizedContext = normalizeText(contextText);
+  if (!normalizedContext.trim()) return commonLineItemTemplates;
+
+  const scoredGroups = contractLineItemTemplateGroups
+    .map((group) => ({ group, score: scoreTemplateGroup(contextText, group) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scoredGroups.length === 0) return commonLineItemTemplates;
+
+  const bestScore = scoredGroups[0].score;
+  return mergeLineItemTemplates(
+    scoredGroups
+      .filter((item) => item.score === bestScore)
+      .flatMap((item) => item.group.items),
+  );
+};
+
+const findLineItemTemplateByCategory = (templates: ContractLineItemTemplate[], category: string) => {
+  const normalizedCategory = normalizeText(category.trim());
+  if (!normalizedCategory) return undefined;
+  return templates.find((template) => normalizeText(template.category) === normalizedCategory);
+};
+
+const serviceContextText = (service?: ServiceCatalogItem | null) =>
+  service
+    ? [service.title, service.shortDescription, service.category?.name, service.category?.slug]
+        .filter(Boolean)
+        .join(" ")
+    : "";
+
+const serviceCategorySelectValue = (categoryId: string) => `${SERVICE_CATEGORY_VALUE_PREFIX}${categoryId}`;
+
+const serviceCategoryIdFromValue = (value: string) =>
+  value.startsWith(SERVICE_CATEGORY_VALUE_PREFIX)
+    ? value.slice(SERVICE_CATEGORY_VALUE_PREFIX.length)
+    : "";
+
+const serviceCategoryContextText = (category?: ServiceCategoryItem | null) =>
+  category
+    ? [category.name, category.slug, category.description]
+        .filter(Boolean)
+        .join(" ")
+    : "";
+
+const findBestServiceForContext = (services: ServiceCatalogItem[], contextText: string) => {
+  const normalizedContext = normalizeText(contextText);
+  if (!normalizedContext.trim()) return undefined;
+
+  const contextTokens = normalizedContext
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 3);
+
+  return services
+    .map((service) => {
+      const normalizedService = normalizeText(serviceContextText(service));
+      const directMatches = [
+        normalizeText(service.title),
+        normalizeText(service.category?.name ?? ""),
+      ].filter(Boolean);
+      const directScore =
+        directMatches.some((value) => normalizedContext.includes(value)) ? 8 : 0;
+      const tokenScore = contextTokens.reduce(
+        (score, token) => score + (normalizedService.includes(token) ? 1 : 0),
+        0,
+      );
+      return { service, score: directScore + tokenScore };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.service;
+};
 
 const suggestUnitForCategory = (category: string) => {
   const text = normalizeText(category);
@@ -224,11 +715,37 @@ const lineAmount = (item: LineItemForm | ContractLineItem) =>
 
 const roundSellingPrice = (value: number) => Math.round(value / 1000) * 1000;
 
+const lineItemFromTemplate = (
+  template: ContractLineItemTemplate,
+  current?: LineItemForm,
+): LineItemForm => ({
+  category: template.category,
+  description: template.description,
+  unit: template.unit,
+  quantity: current?.quantity && toNumber(current.quantity) > 0 ? current.quantity : "1",
+  unitPrice: current?.unitPrice ?? "",
+  note: current?.note ?? "",
+});
+
+const isEmptyLineItem = (item: LineItemForm) =>
+  !item.category.trim() &&
+  !item.description.trim() &&
+  !item.unitPrice.trim() &&
+  !item.note.trim();
+
+const appendLineItems = (currentItems: LineItemForm[], nextItems: LineItemForm[]) =>
+  currentItems.length === 1 && isEmptyLineItem(currentItems[0])
+    ? nextItems
+    : [...currentItems, ...nextItems];
+
 const AdminContracts = () => {
   const navigate = useNavigate();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<ServiceCatalogItem[]>([]);
+  const [serviceCategories, setServiceCategories] = useState<ServiceCategoryItem[]>([]);
+  const [selectedServiceId, setSelectedServiceId] = useState(AUTO_SERVICE_VALUE);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -239,11 +756,96 @@ const AdminContracts = () => {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [budgetLoading, setBudgetLoading] = useState(false);
+  const [servicesLoading, setServicesLoading] = useState(false);
 
   const quoteTotal = useMemo(
     () => form.lineItems.reduce((sum, item) => sum + lineAmount(item), 0),
     [form.lineItems],
   );
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === form.eventId),
+    [form.eventId, projects],
+  );
+
+  const projectContextText = useMemo(
+    () =>
+      [
+        selectedProject?.name,
+        selectedProject?.type,
+        selectedProject?.consultationRequest?.eventType,
+        selectedProject?.consultationRequest?.note,
+        editItem?.event?.name,
+        editItem?.event?.type,
+        editItem?.event?.consultationRequest?.eventType,
+        editItem?.event?.consultationRequest?.note,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    [editItem, selectedProject],
+  );
+
+  const inferredService = useMemo(
+    () => findBestServiceForContext(serviceCatalog, projectContextText),
+    [projectContextText, serviceCatalog],
+  );
+
+  const selectedService = useMemo(
+    () =>
+      selectedServiceId === AUTO_SERVICE_VALUE || selectedServiceId.startsWith(SERVICE_CATEGORY_VALUE_PREFIX)
+        ? inferredService
+        : serviceCatalog.find((service) => service.id === selectedServiceId),
+    [inferredService, selectedServiceId, serviceCatalog],
+  );
+
+  const selectedServiceCategory = useMemo(
+    () =>
+      serviceCategories.find(
+        (category) => category.id === serviceCategoryIdFromValue(selectedServiceId),
+      ),
+    [selectedServiceId, serviceCategories],
+  );
+
+  const lineItemContextText = [
+    projectContextText,
+    selectedServiceId === AUTO_SERVICE_VALUE
+      ? ""
+      : serviceCategoryContextText(selectedServiceCategory) || serviceContextText(selectedService),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const suggestedTemplateGroup = useMemo(
+    () => getBestTemplateGroup(lineItemContextText),
+    [lineItemContextText],
+  );
+
+  const suggestedLineItemTemplates = useMemo(
+    () => getSuggestedLineItemTemplates(lineItemContextText),
+    [lineItemContextText],
+  );
+
+  const lineItemTemplateOptions = useMemo(
+    () => mergeLineItemTemplates([...suggestedLineItemTemplates, ...commonLineItemTemplates]),
+    [suggestedLineItemTemplates],
+  );
+
+  const lineItemContextLabel =
+    selectedServiceId !== AUTO_SERVICE_VALUE && selectedServiceCategory
+      ? selectedServiceCategory.name
+      : selectedServiceId !== AUTO_SERVICE_VALUE && selectedService
+        ? selectedService.title
+      : suggestedTemplateGroup?.label ??
+        inferredService?.title ??
+        selectedProject?.consultationRequest?.eventType ??
+        selectedProject?.type ??
+        editItem?.event?.type ??
+        "Dịch vụ chung";
+  const autoServiceLabel = `Theo dự án - ${lineItemContextLabel}`;
+  const selectedServiceLabel =
+    selectedServiceId === AUTO_SERVICE_VALUE
+      ? autoServiceLabel
+      : selectedServiceCategory?.name ?? selectedService?.title ?? "Chọn dịch vụ";
 
   const loadContracts = async () => {
     setLoading(true);
@@ -274,6 +876,27 @@ const AdminContracts = () => {
     }
   };
 
+  const loadServices = async () => {
+    if ((serviceCatalog.length > 0 && serviceCategories.length > 0) || servicesLoading) return;
+
+    setServicesLoading(true);
+    try {
+      const [services, categories] = await Promise.all([
+        apiClient.get<ServiceCatalogItem[]>("/admin/content/services", {
+          active: true,
+          pageSize: 100,
+        }),
+        apiClient.get<ServiceCategoryItem[]>("/admin/content/service-categories"),
+      ]);
+      setServiceCatalog(services);
+      setServiceCategories(categories.filter((category) => category.isActive !== false));
+    } catch (error) {
+      toast.error("Không tải được danh sách dịch vụ gợi ý");
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
   const loadBudgetItems = async (eventId: string) => {
     if (!eventId) {
       setBudgetItems([]);
@@ -295,8 +918,10 @@ const AdminContracts = () => {
   const openCreate = () => {
     setForm(emptyForm());
     setBudgetItems([]);
+    setSelectedServiceId(AUTO_SERVICE_VALUE);
     setCreateOpen(true);
     void loadProjects();
+    void loadServices();
   };
 
   const selectProject = (eventId: string) => {
@@ -306,6 +931,8 @@ const AdminContracts = () => {
       eventId,
       customerUserId: project?.customerUser?.id ?? "",
     }));
+    setSelectedServiceId(AUTO_SERVICE_VALUE);
+    void loadServices();
     void loadBudgetItems(eventId);
   };
 
@@ -323,15 +950,46 @@ const AdminContracts = () => {
       ...current,
       lineItems: current.lineItems.map((item, itemIndex) => {
         if (itemIndex !== index) return item;
+        const matchedTemplate = findLineItemTemplateByCategory(lineItemTemplateOptions, category);
         const suggestedUnit = suggestUnitForCategory(category);
         const shouldAutoUpdateUnit = !item.unit || item.unit === "gói" || item.unit === suggestUnitForCategory(item.category);
+        const descriptionLooksAuto =
+          !item.description.trim() ||
+          lineItemTemplateOptions.some(
+            (template) => normalizeText(template.description) === normalizeText(item.description),
+          );
         return {
           ...item,
           category,
-          unit: shouldAutoUpdateUnit ? suggestedUnit : item.unit,
+          description: matchedTemplate && descriptionLooksAuto ? matchedTemplate.description : item.description,
+          unit: shouldAutoUpdateUnit ? matchedTemplate?.unit ?? suggestedUnit : item.unit,
         };
       }),
     }));
+  };
+
+  const applyLineItemTemplate = (index: number, templateId: string) => {
+    if (templateId === MANUAL_TEMPLATE_VALUE) return;
+
+    const template = lineItemTemplateOptions.find((item) => item.id === templateId);
+    if (!template) return;
+
+    setForm((current) => ({
+      ...current,
+      lineItems: current.lineItems.map((item, itemIndex) =>
+        itemIndex === index ? lineItemFromTemplate(template, item) : item,
+      ),
+    }));
+  };
+
+  const selectedLineItemTemplateValue = (item: LineItemForm) => {
+    const matchedTemplate = findLineItemTemplateByCategory(lineItemTemplateOptions, item.category);
+    if (!matchedTemplate) return MANUAL_TEMPLATE_VALUE;
+
+    const descriptionIsTemplate =
+      !item.description.trim() ||
+      normalizeText(item.description) === normalizeText(matchedTemplate.description);
+    return descriptionIsTemplate ? matchedTemplate.id : MANUAL_TEMPLATE_VALUE;
   };
 
   const addLineItem = () => {
@@ -356,17 +1014,38 @@ const AdminContracts = () => {
 
     const markup = Number(markupPercent || 0);
     const multiplier = 1 + markup / 100;
-    const nextItems = budgetItems.map((item) => ({
-      category: item.category,
-      description: "",
-      unit: suggestUnitForCategory(item.category),
-      quantity: "1",
-      unitPrice: String(roundSellingPrice(toNumber(item.estimatedAmount) * multiplier)),
-      note: "",
-    }));
+    const nextItems = budgetItems.map((item) => {
+      const template = findLineItemTemplateByCategory(lineItemTemplateOptions, item.category);
+      return {
+        category: item.category,
+        description: template?.description ?? "",
+        unit: template?.unit ?? suggestUnitForCategory(item.category),
+        quantity: "1",
+        unitPrice: String(roundSellingPrice(toNumber(item.estimatedAmount) * multiplier)),
+        note: "",
+      };
+    });
 
-    setForm((current) => ({ ...current, lineItems: nextItems }));
-    toast.success("Đã nhập hạng mục báo giá từ ngân sách nội bộ");
+    setForm((current) => ({
+      ...current,
+      lineItems: appendLineItems(current.lineItems, nextItems),
+    }));
+    toast.success(`Đã thêm ${nextItems.length} hạng mục từ ngân sách nội bộ`);
+  };
+
+  const applySuggestedLineItems = () => {
+    const templates = suggestedLineItemTemplates.length > 0
+      ? suggestedLineItemTemplates
+      : commonLineItemTemplates;
+
+    setForm((current) => ({
+      ...current,
+      lineItems: appendLineItems(
+        current.lineItems,
+        templates.map((template) => lineItemFromTemplate(template)),
+      ),
+    }));
+    toast.success(`Đã thêm ${templates.length} hạng mục cho ${lineItemContextLabel}`);
   };
 
   const normalizedLineItems = () =>
@@ -461,6 +1140,8 @@ const AdminContracts = () => {
         lineItems,
       });
       setEditItem(detail);
+      setSelectedServiceId(AUTO_SERVICE_VALUE);
+      void loadServices();
       void loadBudgetItems(detail.event?.id ?? "");
     } catch (error) {
       toast.error("Không tải được chi tiết hợp đồng");
@@ -522,7 +1203,25 @@ const AdminContracts = () => {
 
   const renderLineItemEditor = () => (
     <div className="space-y-3">
-      <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-low p-3 md:flex-row md:items-end">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-low p-3 lg:flex-row lg:items-end">
+        <div className="w-full lg:w-72">
+          <label className="mb-1 block font-body text-sm text-foreground">Dịch vụ gợi ý</label>
+          <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
+            <SelectTrigger className="rounded-lg border-none bg-surface-lowest font-body">
+              <span className="truncate">{selectedServiceLabel}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={AUTO_SERVICE_VALUE}>
+                {autoServiceLabel}
+              </SelectItem>
+              {serviceCategories.map((category) => (
+                <SelectItem key={category.id} value={serviceCategorySelectValue(category.id)}>
+                  {category.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="w-full md:w-36">
           <label className="mb-1 block font-body text-sm text-foreground">Markup (%)</label>
           <Input
@@ -536,6 +1235,15 @@ const AdminContracts = () => {
         <Button
           type="button"
           variant="outline"
+          onClick={applySuggestedLineItems}
+          disabled={!form.eventId && !selectedService && !selectedServiceCategory}
+          className="rounded-lg"
+        >
+          <ClipboardList size={16} /> Áp dụng hạng mục
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
           onClick={importBudgetAsQuote}
           disabled={budgetLoading || !form.eventId}
           className="rounded-lg"
@@ -543,15 +1251,17 @@ const AdminContracts = () => {
           <Calculator size={16} /> {budgetLoading ? "Đang tải..." : "Nhập từ ngân sách"}
         </Button>
         <p className="font-body text-xs text-muted-foreground">
-          {budgetItems.length > 0 ? `${budgetItems.length} hạng mục nội bộ sẵn sàng` : "Chưa có dữ liệu ngân sách"}
+          {servicesLoading
+            ? "Đang tải dịch vụ..."
+            : `${suggestedLineItemTemplates.length} hạng mục gợi ý · ${budgetItems.length > 0 ? `${budgetItems.length} hạng mục ngân sách` : "chưa có ngân sách"}`}
         </p>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="min-w-[820px] w-full border-collapse text-sm">
+        <table className="min-w-[980px] w-full border-collapse text-sm">
           <thead className="bg-surface-low">
             <tr>
-              <th className="px-3 py-2 text-left font-body font-semibold">Hạng mục</th>
+              <th className="w-72 px-3 py-2 text-left font-body font-semibold">Hạng mục</th>
               <th className="px-3 py-2 text-left font-body font-semibold">Mô tả</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">SL</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">Đơn vị</th>
@@ -564,12 +1274,33 @@ const AdminContracts = () => {
             {form.lineItems.map((item, index) => (
               <tr key={index} className="border-t border-border">
                 <td className="px-3 py-2 align-top">
-                  <Input
-                    value={item.category}
-                    onChange={(event) => updateLineItemCategory(index, event.target.value)}
-                    placeholder="Hạng mục dịch vụ"
-                    className="h-9 rounded-lg border-none bg-surface-lowest font-body"
-                  />
+                  <div className="space-y-2">
+                    <Input
+                      value={item.category}
+                      onChange={(event) => updateLineItemCategory(index, event.target.value)}
+                      placeholder="Nhập tên hạng mục"
+                      className="h-9 rounded-lg border-none bg-surface-lowest font-body font-medium text-foreground"
+                    />
+                    <Select
+                      value={selectedLineItemTemplateValue(item)}
+                      onValueChange={(value) => applyLineItemTemplate(index, value)}
+                    >
+                      <SelectTrigger className="h-7 rounded-lg border border-border bg-background px-2 font-body text-xs text-muted-foreground hover:text-foreground">
+                        <span className="flex min-w-0 items-center gap-1">
+                          <ClipboardList size={12} className="shrink-0" />
+                          <span className="truncate">Chọn mẫu có mô tả sẵn</span>
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={MANUAL_TEMPLATE_VALUE}>Nhập tay</SelectItem>
+                        {lineItemTemplateOptions.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {template.category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </td>
                 <td className="px-3 py-2 align-top">
                   <Input

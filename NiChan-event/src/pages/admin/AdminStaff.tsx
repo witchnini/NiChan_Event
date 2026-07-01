@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Briefcase,
+  CalendarDays,
   Edit2,
   FolderKanban,
   Mail,
+  MapPin,
   MoreHorizontal,
   Phone,
   Plus,
@@ -164,6 +166,11 @@ const assignmentStatusColors: Record<ProjectStaffAssignment["status"], string> =
 
 const staffStatusLabel = (status?: string | null) =>
   status === "inactive" ? "Tạm nghỉ" : "Sẵn sàng";
+
+const staffStatusClasses = (status?: string | null) =>
+  status === "inactive"
+    ? "bg-destructive/10 text-destructive"
+    : "bg-secondary/10 text-secondary";
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof ApiException) {
@@ -623,6 +630,160 @@ const AdminStaff = () => {
     );
   };
 
+  const renderStaffDetail = (person: Staff) => {
+    const tags = staffProjectMap.get(person.id) ?? [];
+    const currentTags = tags.filter(isCurrentProjectTag);
+    const fullName = person.staffProfile?.fullName?.trim();
+    const showFullName = fullName && fullName !== person.displayName;
+
+    return (
+      <div className="space-y-5">
+        <div className="rounded-2xl bg-surface-low p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="h-16 w-16 shrink-0 rounded-2xl gradient-primary flex items-center justify-center text-primary-foreground font-body text-2xl font-bold">
+                {person.displayName?.trim().charAt(0).toUpperCase() ?? "N"}
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-body text-lg font-semibold text-foreground">
+                    {person.displayName}
+                  </h3>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-body font-semibold ${staffStatusClasses(person.status)}`}>
+                    {staffStatusLabel(person.status)}
+                  </span>
+                </div>
+                <p className="mt-1 font-body text-sm text-muted-foreground">
+                  {person.staffProfile?.jobTitle ?? "Chưa cập nhật vai trò"}
+                </p>
+                {showFullName && (
+                  <p className="mt-1 font-body text-xs text-muted-foreground">
+                    Hồ sơ: {fullName}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-xl sm:shrink-0"
+              onClick={() => {
+                openAssign(person.id);
+                setViewItem(null);
+              }}
+              disabled={projectLoading || person.status !== "active"}
+            >
+              <UserPlus size={14} /> Gắn dự án
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-surface-low px-4 py-3">
+            <p className="font-body text-xs text-muted-foreground">Đang làm</p>
+            <p className="mt-1 font-serif text-headline-sm text-foreground">{currentTags.length}</p>
+          </div>
+          <div className="rounded-xl bg-surface-low px-4 py-3">
+            <p className="font-body text-xs text-muted-foreground">Đã tham gia</p>
+            <p className="mt-1 font-serif text-headline-sm text-foreground">{tags.length}</p>
+          </div>
+          <div className="rounded-xl bg-surface-low px-4 py-3">
+            <p className="font-body text-xs text-muted-foreground">Vai trò</p>
+            <p className="mt-1 truncate font-body text-sm font-semibold text-foreground">
+              {person.staffProfile?.jobTitle ?? "Chưa cập nhật"}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <section className="space-y-3">
+            <div>
+              <p className="font-body text-sm font-semibold text-foreground">Liên hệ</p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-low px-3 py-3">
+                <Phone size={15} className="mt-0.5 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="font-body text-[11px] font-semibold uppercase text-muted-foreground">Số điện thoại</p>
+                  <p className="break-words font-body text-sm text-foreground">{person.phone || "Chưa cập nhật"}</p>
+                </div>
+              </div>
+              <div className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-low px-3 py-3">
+                <Mail size={15} className="mt-0.5 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="font-body text-[11px] font-semibold uppercase text-muted-foreground">Email</p>
+                  <p className="break-all font-body text-sm text-foreground">{person.email}</p>
+                </div>
+              </div>
+              <div className="flex min-w-0 items-start gap-3 rounded-xl bg-surface-low px-3 py-3">
+                <MapPin size={15} className="mt-0.5 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="font-body text-[11px] font-semibold uppercase text-muted-foreground">Địa chỉ</p>
+                  <p className="break-words font-body text-sm text-foreground">
+                    {person.staffProfile?.address || "Chưa cập nhật"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-body text-sm font-semibold text-foreground">Dự án đã tham gia</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-surface-high px-3 py-1 text-xs font-body font-semibold text-muted-foreground">
+                {tags.length} dự án
+              </span>
+            </div>
+
+            {tags.length === 0 ? (
+              <div className="rounded-xl bg-surface-low px-4 py-5 text-center">
+                <FolderKanban size={20} className="mx-auto text-muted-foreground" />
+                <p className="mt-2 font-body text-sm font-semibold text-foreground">Chưa có dự án</p>
+                <p className="mt-1 font-body text-xs text-muted-foreground">
+                  Nhân sự này chưa được gắn vào dự án nào.
+                </p>
+              </div>
+            ) : (
+              <div className="max-h-[340px] space-y-2 overflow-y-auto pr-1">
+                {tags.map((tag) => (
+                  <div key={tag.assignmentId} className="rounded-xl border border-border bg-surface-lowest p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="font-body text-sm font-semibold text-foreground">
+                          {tag.projectName}
+                        </p>
+                        <p className="mt-1 font-body text-xs text-muted-foreground">
+                          {tag.roleText}
+                        </p>
+                      </div>
+                      <span className={`w-fit shrink-0 rounded-full px-2.5 py-1 text-[11px] font-body font-semibold ${assignmentStatusColors[tag.assignmentStatus]}`}>
+                        {assignmentStatusLabels[tag.assignmentStatus]}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 font-body text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-low px-2.5 py-1">
+                        <CalendarDays size={12} />
+                        {formatDate(tag.eventDate)}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-low px-2.5 py-1">
+                        <FolderKanban size={12} />
+                        {projectStatusLabels[tag.projectStatus] ?? tag.projectStatus}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -755,13 +916,7 @@ const AdminStaff = () => {
                 <div className="mt-4 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-body text-xs font-semibold text-foreground">Dự án đang làm</p>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-body font-semibold ${
-                        person.status === "active"
-                          ? "bg-secondary/10 text-secondary"
-                          : "bg-destructive/10 text-destructive"
-                      }`}
-                    >
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-body font-semibold ${staffStatusClasses(person.status)}`}>
                       {staffStatusLabel(person.status)}
                     </span>
                   </div>
@@ -810,7 +965,7 @@ const AdminStaff = () => {
       </div>
 
       <Dialog open={!!viewItem} onOpenChange={(open) => !open && setViewItem(null)}>
-        <DialogContent className="sm:max-w-[560px] rounded-2xl border-foreground/30 bg-background p-6">
+        <DialogContent className="max-h-[90vh] overflow-y-auto rounded-2xl border-foreground/30 bg-background p-6 sm:max-w-[720px]">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl">
               Thông tin nhân sự
@@ -819,70 +974,8 @@ const AdminStaff = () => {
               Thông tin chi tiết của nhân sự và các dự án đã tham gia.
             </DialogDescription>
           </DialogHeader>
-          {viewItem && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl gradient-primary flex items-center justify-center text-primary-foreground font-body font-bold text-2xl">
-                  {viewItem.displayName?.trim().charAt(0).toUpperCase() ?? "N"}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="font-body text-lg font-semibold text-foreground truncate">
-                    {viewItem.displayName}
-                  </h3>
-                  <p className="font-body text-sm text-muted-foreground">
-                    {viewItem.staffProfile?.jobTitle ?? "Chưa cập nhật vai trò"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-xl bg-surface-low p-3 text-sm font-body text-muted-foreground">
-                  <p className="flex items-center gap-2">
-                    <Phone size={14} /> {viewItem.phone || "-"}
-                  </p>
-                </div>
-                <div className="rounded-xl bg-surface-low p-3 text-sm font-body text-muted-foreground">
-                  <p className="flex items-center gap-2">
-                    <Mail size={14} /> {viewItem.email}
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <p className="font-body text-sm font-semibold text-foreground">Dự án đã tham gia</p>
-                  <span className="rounded-full bg-surface-high px-3 py-1 text-xs font-body text-muted-foreground">
-                    {(staffProjectMap.get(viewItem.id) ?? []).length} dự án
-                  </span>
-                </div>
-                {renderProjectTags(viewItem, true)}
-              </div>
-
-              <div className="space-y-2">
-                {(staffProjectMap.get(viewItem.id) ?? []).map((tag) => (
-                  <div key={tag.assignmentId} className="rounded-xl border border-border bg-surface-lowest p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-body text-sm font-semibold text-foreground truncate">
-                          {tag.projectName}
-                        </p>
-                        <p className="font-body text-xs text-muted-foreground">
-                          {tag.roleText} - {formatDate(tag.eventDate)}
-                        </p>
-                      </div>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-body font-semibold ${assignmentStatusColors[tag.assignmentStatus]}`}>
-                        {assignmentStatusLabels[tag.assignmentStatus]}
-                      </span>
-                    </div>
-                    <p className="mt-2 font-body text-xs text-muted-foreground">
-                      Trạng thái dự án: {projectStatusLabels[tag.projectStatus] ?? tag.projectStatus}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <DialogFooter>
+          {viewItem && renderStaffDetail(viewItem)}
+          <DialogFooter className="gap-2 pt-1">
             <Button variant="outline" onClick={() => setViewItem(null)}>
               Đóng
             </Button>

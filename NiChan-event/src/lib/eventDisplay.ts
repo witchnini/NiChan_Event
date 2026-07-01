@@ -150,3 +150,23 @@ export const milestoneStatusLabels: Record<string, string> = {
 
 export const getMilestoneStatusLabel = (status?: string | null) =>
   status ? milestoneStatusLabels[status] ?? status : "-";
+
+const normalizeMilestoneTitle = (title?: string | null) =>
+  (title ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/\s+/g, " ") ?? "";
+
+export const milestoneTitleLabels: Record<string, string> = {
+  "kickoff du an": "Khởi động dự án",
+  "khoi dong du an": "Khởi động dự án",
+  "chot ke hoach": "Chốt kế hoạch",
+  "trien khai su kien": "Triển khai sự kiện",
+  "nghiem thu va hoan tat": "Nghiệm thu và hoàn tất",
+};
+
+export const getMilestoneTitleLabel = (title?: string | null) =>
+  title ? milestoneTitleLabels[normalizeMilestoneTitle(title)] ?? title : "-";

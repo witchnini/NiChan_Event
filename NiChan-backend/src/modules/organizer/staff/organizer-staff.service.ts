@@ -26,6 +26,8 @@ export const staffAssignUpdateSchema = z
 export type StaffAssignInput = z.infer<typeof staffAssignSchema>;
 export type StaffAssignUpdateInput = z.infer<typeof staffAssignUpdateSchema>;
 
+const activeProjectStatuses = ["planning", "quoted", "contracted", "in_progress"];
+
 const notifyAdminsOfProjectStaffChange = async (
   tx: Prisma.TransactionClient,
   eventId: string,
@@ -111,13 +113,63 @@ export const listAvailableStaff = async (filters: {
         email: true,
         phone: true,
         avatarUrl: true,
-        staffProfile: { select: { fullName: true, jobTitle: true, employmentStatus: true } },
+        staffProfile: { select: { fullName: true, jobTitle: true, address: true, employmentStatus: true } },
       },
     }),
     prisma.user.count({ where }),
   ]);
 
-  return { items, total };
+  const staffIds = items.map((item) => item.id);
+  const [assignmentCounts, activeAssignmentCounts, completedAssignmentCounts] = staffIds.length
+    ? await Promise.all([
+        prisma.eventStaffAssignment.groupBy({
+          by: ["staffUserId"],
+          where: {
+            staffUserId: { in: staffIds },
+            status: { not: "declined" },
+            event: { status: { in: [...activeProjectStatuses, "completed"] } },
+          },
+          _count: { eventId: true },
+        }),
+        prisma.eventStaffAssignment.groupBy({
+          by: ["staffUserId"],
+          where: {
+            staffUserId: { in: staffIds },
+            status: { not: "declined" },
+            event: { status: { in: activeProjectStatuses } },
+          },
+          _count: { eventId: true },
+        }),
+        prisma.eventStaffAssignment.groupBy({
+          by: ["staffUserId"],
+          where: {
+            staffUserId: { in: staffIds },
+            status: { not: "declined" },
+            event: { status: "completed" },
+          },
+          _count: { eventId: true },
+        }),
+      ])
+    : [[], [], []];
+  const projectCountByStaff = new Map(
+    assignmentCounts.map((item) => [item.staffUserId, item._count.eventId]),
+  );
+  const activeProjectCountByStaff = new Map(
+    activeAssignmentCounts.map((item) => [item.staffUserId, item._count.eventId]),
+  );
+  const completedProjectCountByStaff = new Map(
+    completedAssignmentCounts.map((item) => [item.staffUserId, item._count.eventId]),
+  );
+
+  return {
+    items: items.map((item) => ({
+      ...item,
+      projectCount: projectCountByStaff.get(item.id) ?? 0,
+      activeProjectCount: activeProjectCountByStaff.get(item.id) ?? 0,
+      completedProjectCount: completedProjectCountByStaff.get(item.id) ?? 0,
+    })),
+    total,
+  };
 };
 
 // ─── Event staff assignments (for a specific event) ───────────────────────────
