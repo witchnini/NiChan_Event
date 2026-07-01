@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards } from "lucide-react";
+import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards, ClipboardCheck, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -22,8 +22,22 @@ type EventContract = {
   currentVersion?: string | null;
   sentAt?: string | null;
   signedAt?: string | null;
-  transactions?: { id: string; amount: string | number; status: string }[];
-  versions?: { paymentTerms?: string | null }[];
+  transactions?: { id: string; amount: string | number; status: string; paymentMethod?: string | null }[];
+  versions?: {
+    paymentTerms?: string | null;
+    lineItems?: ContractLineItem[];
+  }[];
+};
+
+type ContractLineItem = {
+  id?: string;
+  category: string;
+  description?: string | null;
+  unit?: string | null;
+  quantity: string | number;
+  unitPrice: string | number;
+  amount?: string | number | null;
+  note?: string | null;
 };
 
 type EventDetail = {
@@ -94,7 +108,7 @@ const EventTracking = () => {
     paymentMethod: PAYMENT_METHODS[0],
     note: "",
   });
-  const [activeTab, setActiveTab] = useState<"timeline" | "chat" | "documents" | "payment">("timeline");
+  const [activeTab, setActiveTab] = useState<"timeline" | "chat" | "documents" | "payment" | "settlement">("timeline");
   const [loading, setLoading] = useState(true);
   const [attaching, setAttaching] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -131,7 +145,7 @@ const EventTracking = () => {
 
   useEffect(() => {
     const tab = searchParams.get("tab");
-    if (tab === "timeline" || tab === "chat" || tab === "documents" || tab === "payment") {
+    if (tab === "timeline" || tab === "chat" || tab === "documents" || tab === "payment" || tab === "settlement") {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -160,7 +174,10 @@ const EventTracking = () => {
       .filter((tx) => tx.status === "completed")
       .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const pending = (contract.transactions ?? [])
-      .filter((tx) => tx.status === "pending")
+      .filter((tx) => tx.status === "pending" && tx.paymentMethod)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const scheduled = (contract.transactions ?? [])
+      .filter((tx) => tx.status === "pending" && !tx.paymentMethod)
       .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const totalValue = Number(contract.totalValue || 0);
     return {
@@ -168,6 +185,7 @@ const EventTracking = () => {
       totalValue,
       completed,
       pending,
+      scheduled,
       outstanding: Math.max(totalValue - completed - pending, 0),
       payable: BILLABLE_CONTRACT_STATUSES.has(contract.status),
     };
@@ -178,12 +196,26 @@ const EventTracking = () => {
       .filter((tx) => tx.status === "completed")
       .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const pending = transactions
-      .filter((tx) => tx.status === "pending")
+      .filter((tx) => tx.status === "pending" && tx.paymentMethod)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    const scheduled = transactions
+      .filter((tx) => tx.status === "pending" && !tx.paymentMethod)
       .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
     const contractTotal = contractSummaries.reduce((sum, contract) => sum + Number(contract.totalValue || 0), 0);
     const total = contractTotal || Number(event?.budgetEstimated || 0);
-    return { total, paid, pending, remaining: Math.max(total - paid - pending, 0) };
+    return { total, paid, pending, scheduled, remaining: Math.max(total - paid - pending, 0) };
   }, [contractSummaries, event?.budgetEstimated, transactions]);
+
+  const settlementLineItems = useMemo(
+    () =>
+      contractSummaries.flatMap((contract) =>
+        (contract.versions?.[0]?.lineItems ?? []).map((item) => ({
+          ...item,
+          contractCode: contract.contractCode,
+        })),
+      ),
+    [contractSummaries],
+  );
 
   const selectedContract = useMemo(
     () => contractSummaries.find((contract) => contract.id === paymentForm.contractId),
@@ -218,15 +250,26 @@ const EventTracking = () => {
       if (!nextContract) {
         return current.contractId ? { ...current, contractId: "" } : current;
       }
-      if (current.contractId === nextContract.id) return current;
+      const scheduledTransaction = transactions.find(
+        (transaction) =>
+          transaction.status === "pending" &&
+          !transaction.paymentMethod &&
+          transaction.contract?.id === nextContract.id,
+      );
+      if (current.contractId === nextContract.id && current.transactionId === scheduledTransaction?.id) return current;
 
       return {
         ...current,
+        transactionId: scheduledTransaction?.id ?? "",
         contractId: nextContract.id,
-        amount: nextContract.outstanding > 0 ? String(nextContract.outstanding) : current.amount,
+        amount: scheduledTransaction
+          ? String(Number(scheduledTransaction.amount || 0))
+          : nextContract.outstanding > 0
+            ? String(nextContract.outstanding)
+            : current.amount,
       };
     });
-  }, [contractSummaries, searchParams]);
+  }, [contractSummaries, searchParams, transactions]);
 
   const handleSendMessage = async () => {
     if (!id || !newMessage.trim()) return;
@@ -283,11 +326,21 @@ const EventTracking = () => {
 
   const selectPaymentContract = (contractId: string) => {
     const contract = contractSummaries.find((item) => item.id === contractId);
+    const scheduledTransaction = transactions.find(
+      (transaction) =>
+        transaction.status === "pending" &&
+        !transaction.paymentMethod &&
+        transaction.contract?.id === contractId,
+    );
     setPaymentForm((current) => ({
       ...current,
-      transactionId: "",
+      transactionId: scheduledTransaction?.id ?? "",
       contractId,
-      amount: contract?.outstanding ? String(contract.outstanding) : current.amount,
+      amount: scheduledTransaction
+        ? String(Number(scheduledTransaction.amount || 0))
+        : contract?.outstanding
+          ? String(contract.outstanding)
+          : current.amount,
     }));
   };
 
@@ -380,6 +433,7 @@ const EventTracking = () => {
             { key: "chat" as const, label: "Trao đổi", icon: MessageSquare },
             { key: "documents" as const, label: "Tài liệu", icon: FileText },
             { key: "payment" as const, label: "Thanh toán", icon: CreditCard },
+            { key: "settlement" as const, label: "Nghiệm thu", icon: ClipboardCheck },
           ].map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-body text-sm whitespace-nowrap transition-all ${activeTab === tab.key ? "gradient-primary text-primary-foreground" : "bg-surface-lowest text-muted-foreground hover:text-foreground"}`}>
@@ -508,8 +562,9 @@ const EventTracking = () => {
 
         {activeTab === "payment" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-5xl space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Tổng giá trị</p><p className="font-serif text-headline-lg text-foreground mt-1">{money(totals.total)}</p></div>
+              <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Theo lịch</p><p className="font-serif text-headline-lg text-foreground mt-1">{money(totals.scheduled)}</p></div>
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Đã thanh toán</p><p className="font-serif text-headline-lg text-secondary mt-1">{money(totals.paid)}</p></div>
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Chờ xác nhận</p><p className="font-serif text-headline-lg text-primary mt-1">{money(totals.pending)}</p></div>
               <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient text-center"><p className="font-body text-sm text-muted-foreground">Còn lại</p><p className="font-serif text-headline-lg text-primary mt-1">{money(totals.remaining)}</p></div>
@@ -519,6 +574,10 @@ const EventTracking = () => {
               {transactions.map(tx => {
                 const canSelectTransaction = tx.status === "pending" && !tx.paymentMethod && Number(tx.amount || 0) > 0;
                 const isSelectedTransaction = paymentForm.transactionId === tx.id;
+                const transactionStatusLabel =
+                  tx.status === "pending" && !tx.paymentMethod
+                    ? "Theo lịch thanh toán"
+                    : getTransactionStatusLabel(tx.status);
 
                 return (
                   <div key={tx.id} className="flex flex-col gap-4 bg-surface-lowest rounded-xl p-5 shadow-ambient sm:flex-row sm:items-center sm:justify-between">
@@ -529,7 +588,7 @@ const EventTracking = () => {
                     <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
                       <div className="text-left sm:text-right">
                         <p className="font-serif font-semibold text-foreground">{money(Number(tx.amount || 0))}</p>
-                        <span className={`text-xs font-body font-semibold ${tx.status === "completed" ? "text-secondary" : "text-muted-foreground"}`}>{getTransactionStatusLabel(tx.status)}</span>
+                        <span className={`text-xs font-body font-semibold ${tx.status === "completed" ? "text-secondary" : "text-muted-foreground"}`}>{transactionStatusLabel}</span>
                       </div>
                       {canSelectTransaction && (
                         <Button
@@ -631,6 +690,129 @@ const EventTracking = () => {
               <Button variant="hero" className="w-full" onClick={handleSubmitPayment} disabled={paying || paymentLimit <= 0}>
                 <CreditCard size={16} /> {paying ? "Đang gửi..." : "Gửi thanh toán"}
               </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {activeTab === "settlement" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-5xl space-y-6">
+            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-surface-low flex items-center justify-center">
+                    <ClipboardCheck size={18} className="text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="font-serif text-headline-md text-foreground">Nghiệm thu & quyết toán</h3>
+                    <p className="font-body text-sm text-muted-foreground mt-1">
+                      {event?.status === "completed"
+                        ? "Sự kiện đã hoàn thành, số liệu bên dưới là căn cứ thanh toán còn lại."
+                        : "Bảng này đang là dự kiến và sẽ tự cập nhật khi sự kiện hoàn thành."}
+                    </p>
+                  </div>
+                </div>
+                <span className={`px-3 py-1 rounded-full font-body text-xs font-semibold ${event?.status === "completed" ? "bg-secondary/10 text-secondary" : "bg-primary/10 text-primary"}`}>
+                  {event?.status === "completed" ? "Đã hoàn thành" : "Đang triển khai"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 mt-5">
+                <div className="rounded-lg bg-surface-low p-4">
+                  <p className="font-body text-xs text-muted-foreground">Giá trị hợp đồng</p>
+                  <p className="font-serif text-headline-md text-foreground mt-1">{money(totals.total)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-low p-4">
+                  <p className="font-body text-xs text-muted-foreground">Đã thanh toán</p>
+                  <p className="font-serif text-headline-md text-secondary mt-1">{money(totals.paid)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-low p-4">
+                  <p className="font-body text-xs text-muted-foreground">Chờ xác nhận</p>
+                  <p className="font-serif text-headline-md text-primary mt-1">{money(totals.pending)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-low p-4">
+                  <p className="font-body text-xs text-muted-foreground">Theo lịch</p>
+                  <p className="font-serif text-headline-md text-foreground mt-1">{money(totals.scheduled)}</p>
+                </div>
+                <div className="rounded-lg bg-surface-low p-4">
+                  <p className="font-body text-xs text-muted-foreground">Còn phải thanh toán</p>
+                  <p className="font-serif text-headline-md text-primary mt-1">{money(totals.remaining)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+              <div className="flex items-center gap-3 mb-4">
+                <ReceiptText size={18} className="text-primary" />
+                <h3 className="font-serif text-headline-md text-foreground">Hạng mục dịch vụ đã chốt</h3>
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className="min-w-[760px] w-full text-sm font-body">
+                  <thead className="bg-surface-low">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-muted-foreground font-semibold">Hợp đồng</th>
+                      <th className="px-3 py-2 text-left text-muted-foreground font-semibold">Hạng mục</th>
+                      <th className="px-3 py-2 text-center text-muted-foreground font-semibold">SL</th>
+                      <th className="px-3 py-2 text-center text-muted-foreground font-semibold">Đơn vị</th>
+                      <th className="px-3 py-2 text-right text-muted-foreground font-semibold">Đơn giá</th>
+                      <th className="px-3 py-2 text-right text-muted-foreground font-semibold">Thành tiền</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {settlementLineItems.map((item, index) => {
+                      const quantity = Number(item.quantity || 0);
+                      const unitPrice = Number(item.unitPrice || 0);
+                      const amount = Number(item.amount ?? quantity * unitPrice);
+                      return (
+                        <tr key={item.id ?? `${item.contractCode}-${index}`} className="border-t border-border">
+                          <td className="px-3 py-3 text-primary font-semibold">{item.contractCode}</td>
+                          <td className="px-3 py-3">
+                            <p className="font-semibold text-foreground">{item.category}</p>
+                            {item.description && <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>}
+                          </td>
+                          <td className="px-3 py-3 text-center text-foreground">{quantity.toLocaleString("vi-VN")}</td>
+                          <td className="px-3 py-3 text-center text-foreground">{item.unit || "-"}</td>
+                          <td className="px-3 py-3 text-right text-foreground">{money(unitPrice)}</td>
+                          <td className="px-3 py-3 text-right font-semibold text-foreground">{money(amount)}</td>
+                        </tr>
+                      );
+                    })}
+                    {settlementLineItems.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                          Chưa có bảng hạng mục báo giá trong hợp đồng.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+              <h3 className="font-serif text-headline-md text-foreground mb-4">Kết luận quyết toán</h3>
+              <div className="space-y-3 font-body text-sm">
+                <div className="flex items-center justify-between gap-4 border-b border-border pb-3">
+                  <span className="text-muted-foreground">Giá trị hợp đồng và phụ lục đã chốt</span>
+                  <span className="font-semibold text-foreground">{money(totals.total)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-b border-border pb-3">
+                  <span className="text-muted-foreground">Tổng tiền khách hàng đã thanh toán và admin xác nhận</span>
+                  <span className="font-semibold text-secondary">{money(totals.paid)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-b border-border pb-3">
+                  <span className="text-muted-foreground">Khoản khách đã gửi, đang chờ xác nhận</span>
+                  <span className="font-semibold text-primary">{money(totals.pending)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-foreground font-semibold">Số tiền còn phải thanh toán</span>
+                  <span className="font-serif text-headline-md text-primary">{money(totals.remaining)}</span>
+                </div>
+              </div>
+              {totals.remaining > 0 && (
+                <Button variant="hero" className="mt-5" onClick={() => setActiveTab("payment")}>
+                  <CreditCard size={16} /> Thanh toán phần còn lại
+                </Button>
+              )}
             </div>
           </motion.div>
         )}

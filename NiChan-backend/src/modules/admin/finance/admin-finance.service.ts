@@ -91,7 +91,7 @@ export const getProjectSummary = async () => {
       type: true,
       status: true,
       budgetEstimated: true,
-      transactions: { select: { amount: true, status: true } },
+      transactions: { select: { amount: true, status: true, paymentMethod: true } },
       contracts: {
         where: { status: { not: "cancelled" } },
         select: { id: true, status: true, totalValue: true },
@@ -111,7 +111,7 @@ export const getProjectSummary = async () => {
       .filter((transaction) => transaction.status === "completed")
       .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
     const pendingCollection = event.transactions
-      .filter((transaction) => transaction.status === "pending")
+      .filter((transaction) => transaction.status === "pending" && transaction.paymentMethod)
       .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
     const allBudgetItems = event.budgets.flatMap((budget) => budget.items);
     const budgetActual = allBudgetItems
@@ -240,9 +240,14 @@ export const listFinanceContracts = async () => {
         },
       },
       customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: { paymentTerms: true },
+      },
       transactions: {
         where: { status: { in: ["pending", "completed"] } },
-        select: { amount: true, status: true },
+        select: { amount: true, status: true, paymentMethod: true },
       },
     },
   });
@@ -253,7 +258,10 @@ export const listFinanceContracts = async () => {
       .filter((transaction) => transaction.status === "completed")
       .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
     const pendingAmount = contract.transactions
-      .filter((transaction) => transaction.status === "pending")
+      .filter((transaction) => transaction.status === "pending" && transaction.paymentMethod)
+      .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
+    const scheduledAmount = contract.transactions
+      .filter((transaction) => transaction.status === "pending" && !transaction.paymentMethod)
       .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
 
     return {
@@ -263,8 +271,10 @@ export const listFinanceContracts = async () => {
       totalValue,
       collectedAmount,
       pendingAmount,
+      scheduledAmount,
       outstandingAmount: Math.max(totalValue - collectedAmount, 0),
       currentVersion: contract.currentVersion,
+      paymentTerms: contract.versions[0]?.paymentTerms ?? "",
       sentAt: contract.sentAt,
       signedAt: contract.signedAt,
       event: contract.event,

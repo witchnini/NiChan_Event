@@ -105,6 +105,13 @@ const allowedTaskMoves: Record<string, string[]> = {
   done: [],
 };
 
+const taskStatusLabel: Record<string, string> = {
+  todo: "Chờ xử lý",
+  in_progress: "Đang thực hiện",
+  review: "Đang kiểm tra",
+  done: "Hoàn thành",
+};
+
 type TaskFormState = { title: string; description: string; dueAt: string; priority: "low" | "medium" | "high" };
 const emptyForm: TaskFormState = { title: "", description: "", dueAt: "", priority: "medium" };
 
@@ -566,7 +573,7 @@ const AdminProjects = () => {
                 <div key={column.id} className="bg-surface-low rounded-xl p-4 min-w-0">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-serif font-semibold text-foreground text-sm">{column.title}</h3>
+                      <h3 className="font-serif font-semibold text-foreground text-sm">{taskStatusLabel[column.id] ?? column.title}</h3>
                       <span className="font-body text-xs text-muted-foreground bg-surface-high rounded-full px-2 py-0.5">
                         {column.tasks.length}
                       </span>
@@ -610,13 +617,14 @@ const AdminProjects = () => {
                             {(allowedTaskMoves[task.status] ?? []).map((nextStatus) => {
                               const target = allColumns.find((item) => item.id === nextStatus);
                               if (!target) return null;
+                              const targetTitle = taskStatusLabel[target.id] ?? target.title;
                               return (
                                 <button
                                   key={nextStatus}
                                   onClick={() => moveTask(task, nextStatus)}
                                   className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-body text-muted-foreground hover:bg-surface-low"
                                 >
-                                  <ChevronRight size={10} /> {target.title}
+                                  <ChevronRight size={10} /> {targetTitle}
                                 </button>
                               );
                             })}

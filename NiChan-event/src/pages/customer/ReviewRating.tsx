@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Star, Send, CheckCircle } from "lucide-react";
+import { Star, Send, CheckCircle, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
@@ -16,8 +16,23 @@ type CustomerEvent = {
   customerUser?: { displayName: string } | null;
   consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
 };
-type Review = { id: string; eventId: string; event?: { id: string; name: string }; ratingOverall: number; comment: string };
+type ReviewScore = { score: number; criteria?: { key: string; label: string } | null };
+type Review = {
+  id: string;
+  eventId: string;
+  event?: { id: string; name: string };
+  ratingOverall: number;
+  comment: string;
+  status?: string;
+  scores?: ReviewScore[];
+};
 type Criterion = { key: string; label: string };
+
+const reviewStatusLabel: Record<string, string> = {
+  pending: "Chờ duyệt",
+  approved: "Đã duyệt",
+  hidden: "Đã ẩn",
+};
 
 const ReviewRating = () => {
   const [events, setEvents] = useState<CustomerEvent[]>([]);
@@ -50,31 +65,64 @@ const ReviewRating = () => {
   const reviewByEvent = useMemo(() => new Map(reviews.map(review => [review.event?.id ?? review.eventId, review])), [reviews]);
   const reviewableEvents = events.filter(event => event.status === "completed" || reviewByEvent.has(event.id));
 
-  const startReview = (eventId: string) => {
+  const startReview = (eventId: string, review?: Review) => {
+    const nextRatings: Record<string, number> = {};
+    if (review) {
+      const scoreByKey = new Map<string, number>();
+      review.scores?.forEach((score) => {
+        const key = score.criteria?.key;
+        if (key) scoreByKey.set(key, score.score);
+      });
+
+      criteria.forEach((criterion) => {
+        nextRatings[criterion.key] = scoreByKey.get(criterion.key) ?? review.ratingOverall;
+      });
+    }
+
     setActiveEventId(eventId);
-    setRatings({});
-    setComment("");
+    setRatings(nextRatings);
+    setComment(review?.comment ?? "");
   };
 
   const submitReview = async () => {
     if (!activeEventId) return;
-    if (criteria.length > 0 && Object.keys(ratings).length < criteria.length) {
+    if (criteria.length > 0 && criteria.some((criterion) => !ratings[criterion.key])) {
       toast.error("Vui lòng đánh giá tất cả tiêu chí");
       return;
     }
-    const scores = Object.values(ratings);
+    const existingReview = reviewByEvent.get(activeEventId);
+    const scores = criteria.length > 0
+      ? criteria.flatMap((criterion) => {
+          const score = ratings[criterion.key];
+          return score ? [score] : [];
+        })
+      : Object.values(ratings);
     const avgRating = scores.length ? Math.round(scores.reduce((s, v) => s + v, 0) / scores.length) : 5;
+    const payload = {
+      eventId: activeEventId,
+      ratingOverall: avgRating,
+      comment,
+      criteriaScores: criteria.map(c => ({ key: c.key, score: ratings[c.key] ?? avgRating })),
+    };
     try {
-      await apiClient.post("/customer/reviews", {
-        eventId: activeEventId,
-        ratingOverall: avgRating,
-        comment,
-        criteriaScores: criteria.map(c => ({ key: c.key, score: ratings[c.key] ?? avgRating })),
-      });
+      if (existingReview) {
+        await apiClient.patch(`/customer/reviews/${existingReview.id}`, payload);
+      } else {
+        await apiClient.post("/customer/reviews", payload);
+      }
       setActiveEventId(null);
+      if (existingReview) {
+        toast.success("Đã cập nhật đánh giá");
+        await load();
+        return;
+      }
       toast.success("Đã gửi đánh giá thành công");
       await load();
     } catch (error) {
+      if (existingReview) {
+        toast.error("Không thể cập nhật đánh giá");
+        return;
+      }
       toast.error("Gửi đánh giá thất bại");
     }
   };
@@ -92,6 +140,8 @@ const ReviewRating = () => {
           {reviewableEvents.length === 0 && <p className="font-body text-muted-foreground">Chưa có sự kiện hoàn thành để đánh giá.</p>}
           {reviewableEvents.map((event, i) => {
             const review = reviewByEvent.get(event.id);
+            const canEditReview = event.status === "completed";
+            const isReviewFormOpen = activeEventId === event.id;
             return (
               <motion.div key={event.id} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
@@ -100,14 +150,28 @@ const ReviewRating = () => {
                     <p className="font-body text-sm text-muted-foreground mt-1">Ngày sự kiện: {event.eventDate ? new Date(event.eventDate).toLocaleDateString("vi-VN") : "-"}</p>
                   </div>
                   {review ? (
-                    <div className="flex items-center gap-2">
-                      <div className="flex gap-0.5">
-                        {Array.from({ length: 5 }, (_, idx) => (
-                          <Star key={idx} size={18} className={idx < Math.round(review.ratingOverall) ? "text-amber-500 fill-amber-500" : "text-muted-foreground"} />
-                        ))}
+                    <div className="flex flex-col gap-2 sm:items-end">
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-0.5">
+                          {Array.from({ length: 5 }, (_, idx) => (
+                            <Star key={idx} size={18} className={idx < Math.round(review.ratingOverall) ? "text-amber-500 fill-amber-500" : "text-muted-foreground"} />
+                          ))}
+                        </div>
+                        <span className="font-serif font-bold text-foreground">{review.ratingOverall}</span>
+                        <CheckCircle size={16} className="text-secondary" />
                       </div>
-                      <span className="font-serif font-bold text-foreground">{review.ratingOverall}</span>
-                      <CheckCircle size={16} className="text-secondary" />
+                      <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                        {review.status && (
+                          <span className="rounded-full bg-surface-low px-2 py-1 font-body text-xs font-semibold text-muted-foreground">
+                            {reviewStatusLabel[review.status] ?? review.status}
+                          </span>
+                        )}
+                        {canEditReview && (
+                          <Button variant="outline" size="sm" onClick={() => startReview(event.id, review)}>
+                            <Edit2 size={14} /> Sửa đánh giá
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <Button variant="hero" size="sm" onClick={() => startReview(event.id)}><Star size={14} /> Đánh giá ngay</Button>
@@ -116,7 +180,7 @@ const ReviewRating = () => {
 
                 {review?.comment && <div className="bg-surface-low rounded-xl p-4"><p className="font-body text-sm italic text-foreground">"{review.comment}"</p></div>}
 
-                {activeEventId === event.id && !review && (
+                {isReviewFormOpen && canEditReview && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mt-6 space-y-5">
                     <div className="space-y-4">
                       {criteria.map(c => (
@@ -140,7 +204,9 @@ const ReviewRating = () => {
 
                     <div className="flex gap-3">
                       <Button variant="outline" onClick={() => setActiveEventId(null)} className="flex-1">Hủy</Button>
-                      <Button variant="hero" onClick={submitReview} className="flex-1"><Send size={14} /> Gửi đánh giá</Button>
+                      <Button variant="hero" onClick={submitReview} className="flex-1">
+                        <Send size={14} /> {review ? "Cập nhật đánh giá" : "Gửi đánh giá"}
+                      </Button>
                     </div>
                   </motion.div>
                 )}

@@ -11,6 +11,9 @@ const payableTransactionStatuses = ["pending", "completed"];
 const toNumber = (value: unknown) => Number(value ?? 0);
 
 const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
+const contractLineItemsInclude = {
+  orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
+};
 
 const customerTransactionInclude = {
   event: {
@@ -35,12 +38,15 @@ const customerTransactionInclude = {
   },
 } satisfies Prisma.TransactionInclude;
 
-const payableAmounts = (totalValue: unknown, transactions: { amount: unknown; status: string }[]) => {
+const payableAmounts = (
+  totalValue: unknown,
+  transactions: { amount: unknown; status: string; paymentMethod?: string | null }[],
+) => {
   const completed = transactions
     .filter((transaction) => transaction.status === "completed")
     .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
   const pending = transactions
-    .filter((transaction) => transaction.status === "pending")
+    .filter((transaction) => transaction.status === "pending" && transaction.paymentMethod)
     .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
   return {
     completed,
@@ -196,12 +202,12 @@ export const getCustomerEventById = async (eventId: string, customerUserId: stri
           signedAt: true,
           transactions: {
             where: { status: { in: payableTransactionStatuses } },
-            select: { id: true, amount: true, status: true },
+            select: { id: true, amount: true, status: true, paymentMethod: true },
           },
           versions: {
             take: 1,
             orderBy: { createdAt: "desc" },
-            select: { paymentTerms: true },
+            include: { lineItems: contractLineItemsInclude },
           },
         },
       },
@@ -399,6 +405,54 @@ export const submitReview = async (customerUserId: string, body: unknown) => {
   });
 };
 
+export const updateReview = async (
+  customerUserId: string,
+  reviewId: string,
+  body: unknown,
+) => {
+  const input = reviewBodySchema.parse(body);
+
+  const existing = await prisma.review.findFirst({
+    where: {
+      id: reviewId,
+      eventId: input.eventId,
+      customerUserId,
+      event: { status: "completed" },
+    },
+    select: { id: true },
+  });
+  if (!existing) throw createError("NOT_FOUND", "Completed review not found", 404);
+
+  const criteriaKeys = input.criteriaScores?.map((s) => s.key) ?? [];
+  const criteriaRecords =
+    criteriaKeys.length > 0
+      ? await prisma.reviewCriteria.findMany({ where: { key: { in: criteriaKeys } } })
+      : [];
+
+  return prisma.$transaction(async (tx) => {
+    await tx.reviewScore.deleteMany({ where: { reviewId } });
+
+    return tx.review.update({
+      where: { id: reviewId },
+      data: {
+        ratingOverall: input.ratingOverall,
+        comment: input.comment,
+        status: "pending",
+        submittedAt: new Date(),
+        approvedAt: null,
+        approvedById: null,
+        scores: {
+          create: criteriaRecords.map((c) => ({
+            reviewCriteriaId: c.id,
+            score: input.criteriaScores?.find((s) => s.key === c.key)?.score ?? 0,
+          })),
+        },
+      },
+      include: { scores: { include: { criteria: true } } },
+    });
+  });
+};
+
 // ─── Contracts & Transactions ─────────────────────────────────────────────────
 
 export const getCustomerContracts = async (customerUserId: string) => {
@@ -423,9 +477,13 @@ export const getCustomerContracts = async (customerUserId: string) => {
       },
       transactions: {
         where: { status: { in: payableTransactionStatuses } },
-        select: { id: true, amount: true, status: true },
+        select: { id: true, amount: true, status: true, paymentMethod: true },
       },
-      versions: { take: 1, orderBy: { createdAt: "desc" } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: contractLineItemsInclude },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -450,7 +508,11 @@ export const getCustomerContractById = async (contractId: string, customerUserId
       },
       customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
       createdBy: { select: { id: true, displayName: true } },
-      versions: { take: 1, orderBy: { createdAt: "desc" } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: contractLineItemsInclude },
+      },
     },
   });
   if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
@@ -560,7 +622,7 @@ export const submitCustomerPayment = async (customerUserId: string, body: unknow
           },
           transactions: {
             where: { status: { in: payableTransactionStatuses } },
-            select: { amount: true, status: true },
+            select: { amount: true, status: true, paymentMethod: true },
           },
         },
       });
@@ -587,7 +649,7 @@ export const submitCustomerPayment = async (customerUserId: string, body: unknow
         include: {
           transactions: {
             where: { status: { in: payableTransactionStatuses } },
-            select: { amount: true, status: true },
+            select: { amount: true, status: true, paymentMethod: true },
           },
         },
       });

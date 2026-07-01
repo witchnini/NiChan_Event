@@ -24,7 +24,7 @@ type Contract = {
     consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
   } | null;
   versions?: { scopeText?: string; paymentTerms?: string; generalTerms?: string }[];
-  transactions?: { id: string; amount: string | number; status: string }[];
+  transactions?: { id: string; amount: string | number; status: string; paymentMethod?: string | null }[];
 };
 
 const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + "đ";
@@ -37,7 +37,12 @@ const contractPaid = (contract: Contract) =>
 
 const contractPending = (contract: Contract) =>
   (contract.transactions ?? [])
-    .filter((transaction) => transaction.status === "pending")
+    .filter((transaction) => transaction.status === "pending" && transaction.paymentMethod)
+    .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+
+const contractSelectablePending = (contract: Contract) =>
+  (contract.transactions ?? [])
+    .filter((transaction) => transaction.status === "pending" && !transaction.paymentMethod)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
 
 const contractOutstanding = (contract: Contract) =>
@@ -68,7 +73,9 @@ const MyContracts = () => {
     navigate(`/dashboard/su-kien/${contract.event.id}?tab=payment&contractId=${contract.id}`);
   };
   const canPay = (contract: Contract) =>
-    Boolean(contract.event?.id) && billableStatuses.has(contract.status) && contractOutstanding(contract) > 0;
+    Boolean(contract.event?.id) &&
+    billableStatuses.has(contract.status) &&
+    (contractOutstanding(contract) > 0 || contractSelectablePending(contract) > 0);
 
   return (
     <div className="min-h-screen pt-24 pb-16">

@@ -1,16 +1,27 @@
-import { forwardRef } from "react";
+import { forwardRef, type ReactNode } from "react";
 import { getEventDisplayName } from "@/lib/eventDisplay";
 
-// Thông tin Bên A (đơn vị cung cấp dịch vụ). Hệ thống chưa có bảng cấu hình công ty
-// nên để hằng số ở đây — cập nhật khi có thông tin pháp lý chính thức.
+// Thông tin Bên A (đơn vị cung cấp dịch vụ). Khi có bảng cấu hình công ty,
+// các giá trị này có thể chuyển sang cấu hình hệ thống.
 export const PROVIDER = {
   name: "CÔNG TY TNHH NICHAN EVENTS",
-  address: "Hà Đông - Hà Nội",  
+  address: "Hà Đông - Hà Nội",
   taxCode: "0312345678",
   phone: "1900 1234",
   email: "hopdong@nichan.vn",
-  representative: "Bà Phạm Thủy Ni Ni",
+  representative: "Bà Phạm Thùy Ni Ni",
   position: "Giám đốc",
+};
+
+type ContractLineItem = {
+  id?: string;
+  category: string;
+  description?: string | null;
+  unit?: string | null;
+  quantity: string | number;
+  unitPrice: string | number;
+  amount?: string | number | null;
+  note?: string | null;
 };
 
 type ContractVersion = {
@@ -18,6 +29,7 @@ type ContractVersion = {
   scopeText?: string;
   paymentTerms?: string;
   generalTerms?: string;
+  lineItems?: ContractLineItem[];
 };
 
 export type FullContract = {
@@ -41,89 +53,172 @@ export type FullContract = {
   customerUser?: { displayName?: string | null; phone?: string | null; email?: string | null } | null;
   createdBy?: { displayName?: string | null } | null;
   versions?: ContractVersion[];
+  transactions?: {
+    id: string;
+    amount: string | number;
+    status: string;
+    paymentMethod?: string | null;
+  }[];
 };
 
-const money = (value: string | number) => Number(value || 0).toLocaleString("vi-VN") + " ₫";
+const money = (value: string | number | null | undefined) =>
+  Number(value || 0).toLocaleString("vi-VN") + " đ";
 
-const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleDateString("vi-VN") : "…/…/……");
+const numberValue = (value: string | number | null | undefined) => Number(value || 0);
+
+const formatQuantity = (value: string | number) => {
+  const quantity = numberValue(value);
+  return Number.isInteger(quantity)
+    ? quantity.toLocaleString("vi-VN")
+    : quantity.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+};
+
+const formatDate = (value?: string | null) =>
+  value ? new Date(value).toLocaleDateString("vi-VN") : ".../.../....";
 
 const formatDateParts = (value?: string | null) => {
-  if (!value) return { day: "….", month: "….", year: "……" };
+  if (!value) return { day: "....", month: "....", year: "...." };
   const d = new Date(value);
-  return { day: String(d.getDate()), month: String(d.getMonth() + 1), year: String(d.getFullYear()) };
+  return {
+    day: String(d.getDate()),
+    month: String(d.getMonth() + 1),
+    year: String(d.getFullYear()),
+  };
 };
 
-// Đọc một khối 0..999 thành chữ tiếng Việt
 const DIGITS = ["không", "một", "hai", "ba", "bốn", "năm", "sáu", "bảy", "tám", "chín"];
+
 const readBlock = (n: number): string => {
-  const tram = Math.floor(n / 100);
-  const chuc = Math.floor((n % 100) / 10);
-  const donvi = n % 10;
-  let s = "";
-  if (tram > 0) {
-    s += DIGITS[tram] + " trăm";
-    if (chuc === 0 && donvi > 0) s += " lẻ";
+  const hundreds = Math.floor(n / 100);
+  const tens = Math.floor((n % 100) / 10);
+  const units = n % 10;
+  let value = "";
+
+  if (hundreds > 0) {
+    value += DIGITS[hundreds] + " trăm";
+    if (tens === 0 && units > 0) value += " lẻ";
   }
-  if (chuc > 0) {
-    s += chuc === 1 ? " mười" : " " + DIGITS[chuc] + " mươi";
+
+  if (tens > 0) {
+    value += tens === 1 ? " mười" : " " + DIGITS[tens] + " mươi";
   }
-  if (donvi > 0) {
-    if (chuc > 1 && donvi === 1) s += " mốt";
-    else if (chuc >= 1 && donvi === 5) s += " lăm";
-    else s += " " + DIGITS[donvi];
+
+  if (units > 0) {
+    if (tens > 1 && units === 1) value += " mốt";
+    else if (tens >= 1 && units === 5) value += " lăm";
+    else value += " " + DIGITS[units];
   }
-  return s.trim();
+
+  return value.trim();
 };
 
-// Chuyển số tiền thành chữ (đủ dùng cho giá trị hợp đồng thông thường)
 export const numberToVietnameseWords = (value: number): string => {
-  const n = Math.floor(Number(value) || 0);
-  if (n <= 0) return "Không đồng";
+  const amount = Math.floor(Number(value) || 0);
+  if (amount <= 0) return "Không đồng";
+
   const units = ["", " nghìn", " triệu", " tỷ"];
   const blocks: number[] = [];
-  let rest = n;
+  let rest = amount;
+
   while (rest > 0) {
     blocks.push(rest % 1000);
     rest = Math.floor(rest / 1000);
   }
+
   const parts: string[] = [];
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    if (blocks[i] === 0) continue;
-    parts.push(readBlock(blocks[i]) + units[i]);
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    if (blocks[index] === 0) continue;
+    parts.push(readBlock(blocks[index]) + units[index]);
   }
+
   const result = parts.join(" ").trim() + " đồng";
   return result.charAt(0).toUpperCase() + result.slice(1);
 };
 
-const Clause = ({ index, title, children }: { index: number; title: string; children: React.ReactNode }) => (
+const getLineAmount = (item: ContractLineItem) => {
+  const storedAmount = numberValue(item.amount);
+  if (storedAmount > 0) return storedAmount;
+  return numberValue(item.quantity) * numberValue(item.unitPrice);
+};
+
+const Clause = ({ index, title, children }: { index: number; title: string; children: ReactNode }) => (
   <div className="mb-5">
-    <h3 className="font-serif font-bold text-foreground mb-1">Điều {index}: {title}</h3>
-    <div className="text-foreground text-justify leading-relaxed whitespace-pre-wrap">{children}</div>
+    <h3 className="mb-1 font-serif font-bold text-foreground">Điều {index}: {title}</h3>
+    <div className="whitespace-pre-wrap text-justify leading-relaxed text-foreground">{children}</div>
   </div>
 );
 
-/**
- * Bản hợp đồng đầy đủ, định dạng A4, in / lưu PDF được (qua window.print()).
- */
+const QuotationTable = ({ items, totalValue }: { items: ContractLineItem[]; totalValue: string | number }) => {
+  if (items.length === 0) {
+    return (
+      <p>
+        Tổng giá trị hợp đồng: <span className="font-bold">{money(totalValue)}</span>
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 overflow-hidden border border-gray-400">
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className="border border-gray-400 px-2 py-2 text-center font-bold">STT</th>
+            <th className="border border-gray-400 px-2 py-2 text-left font-bold">Hạng mục dịch vụ</th>
+            <th className="border border-gray-400 px-2 py-2 text-center font-bold">SL</th>
+            <th className="border border-gray-400 px-2 py-2 text-center font-bold">Đơn vị</th>
+            <th className="border border-gray-400 px-2 py-2 text-right font-bold">Đơn giá</th>
+            <th className="border border-gray-400 px-2 py-2 text-right font-bold">Thành tiền</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, index) => (
+            <tr key={item.id ?? `${item.category}-${index}`}>
+              <td className="border border-gray-400 px-2 py-2 text-center">{index + 1}</td>
+              <td className="border border-gray-400 px-2 py-2">
+                <p className="font-semibold">{item.category}</p>
+                {item.description && <p className="mt-0.5 text-[11px] leading-relaxed">{item.description}</p>}
+                {item.note && <p className="mt-0.5 text-[11px] italic">Ghi chú: {item.note}</p>}
+              </td>
+              <td className="border border-gray-400 px-2 py-2 text-center">{formatQuantity(item.quantity)}</td>
+              <td className="border border-gray-400 px-2 py-2 text-center">{item.unit || "-"}</td>
+              <td className="border border-gray-400 px-2 py-2 text-right">{money(item.unitPrice)}</td>
+              <td className="border border-gray-400 px-2 py-2 text-right font-semibold">{money(getLineAmount(item))}</td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={5} className="border border-gray-400 px-2 py-2 text-right font-bold">
+              Tổng cộng
+            </td>
+            <td className="border border-gray-400 px-2 py-2 text-right font-bold">{money(totalValue)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(({ contract }, ref) => {
   const version = contract.versions?.[0];
-  const customerName = contract.customerUser?.displayName ?? contract.event?.consultationRequest?.customerName ?? "…";
-  const eventName = contract.event ? getEventDisplayName(contract.event) : "…";
+  const lineItems = version?.lineItems ?? [];
+  const customerName = contract.customerUser?.displayName ?? contract.event?.consultationRequest?.customerName ?? "...";
+  const eventName = contract.event ? getEventDisplayName(contract.event) : "...";
   const signDate = formatDateParts(contract.signedAt ?? contract.sentAt ?? contract.createdAt);
 
   return (
-    <div ref={ref} className="contract-print-area bg-white text-black mx-auto p-10 font-body text-sm" style={{ maxWidth: "820px" }}>
-      {/* Quốc hiệu */}
-      <div className="text-center mb-6">
+    <div
+      ref={ref}
+      className="contract-print-area mx-auto bg-white p-10 font-body text-sm text-black"
+      style={{ maxWidth: "820px" }}
+    >
+      <div className="mb-6 text-center">
         <p className="font-bold uppercase">Cộng hòa xã hội chủ nghĩa Việt Nam</p>
         <p className="font-semibold">Độc lập - Tự do - Hạnh phúc</p>
-        <p className="tracking-widest">———oOo———</p>
+        <p>----------oOo----------</p>
       </div>
 
-      {/* Tiêu đề */}
-      <div className="text-center mb-6">
+      <div className="mb-6 text-center">
         <h1 className="font-serif text-2xl font-bold uppercase">Hợp đồng dịch vụ tổ chức sự kiện</h1>
-        <p className="mt-1">Số: {contract.contractCode} &nbsp;·&nbsp; Phiên bản {contract.currentVersion}</p>
+        <p className="mt-1">Số: {contract.contractCode} · Phiên bản {contract.currentVersion}</p>
       </div>
 
       <div className="mb-5 text-justify leading-relaxed">
@@ -134,16 +229,14 @@ const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(
         </p>
       </div>
 
-      {/* Bên A */}
       <div className="mb-4">
         <p className="font-bold">BÊN A (BÊN CUNG CẤP DỊCH VỤ):</p>
         <p>Tên đơn vị: <span className="font-semibold">{PROVIDER.name}</span></p>
         <p>Địa chỉ: {PROVIDER.address}</p>
-        <p>Mã số thuế: {PROVIDER.taxCode} &nbsp;·&nbsp; Điện thoại: {PROVIDER.phone} &nbsp;·&nbsp; Email: {PROVIDER.email}</p>
-        <p>Đại diện: <span className="font-semibold">{PROVIDER.representative}</span> &nbsp;·&nbsp; Chức vụ: {PROVIDER.position}</p>
+        <p>Mã số thuế: {PROVIDER.taxCode} · Điện thoại: {PROVIDER.phone} · Email: {PROVIDER.email}</p>
+        <p>Đại diện: <span className="font-semibold">{PROVIDER.representative}</span> · Chức vụ: {PROVIDER.position}</p>
       </div>
 
-      {/* Bên B */}
       <div className="mb-5">
         <p className="font-bold">BÊN B (KHÁCH HÀNG):</p>
         <p>Họ và tên: <span className="font-semibold">{customerName}</span></p>
@@ -158,18 +251,20 @@ const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(
           Bên A cung cấp cho Bên B dịch vụ tổ chức sự kiện: <span className="font-semibold">{eventName}</span>
           {contract.event?.type ? ` (loại hình: ${contract.event.type})` : ""}.
         </p>
-        {contract.event?.eventDate && <p>Thời gian tổ chức (dự kiến): {formatDate(contract.event.eventDate)}.</p>}
+        {contract.event?.eventDate && <p>Thời gian tổ chức dự kiến: {formatDate(contract.event.eventDate)}.</p>}
         {contract.event?.locationText && <p>Địa điểm: {contract.event.locationText}.</p>}
         <p className="mt-2 font-semibold">Phạm vi công việc:</p>
         <p>{version?.scopeText || "Theo thỏa thuận chi tiết giữa hai bên."}</p>
       </Clause>
 
-      <Clause index={2} title="Giá trị hợp đồng và phương thức thanh toán">
+      <Clause index={2} title="Báo giá dịch vụ và phương thức thanh toán">
         <p>
           Tổng giá trị hợp đồng: <span className="font-bold">{money(contract.totalValue)}</span>
         </p>
         <p className="italic">(Bằng chữ: {numberToVietnameseWords(Number(contract.totalValue))})</p>
-        <p className="mt-2 font-semibold">Điều khoản thanh toán:</p>
+        <p className="mt-3 font-semibold">Phụ lục báo giá chi tiết:</p>
+        <QuotationTable items={lineItems} totalValue={contract.totalValue} />
+        <p className="mt-3 font-semibold">Điều khoản thanh toán:</p>
         <p>{version?.paymentTerms || "Theo thỏa thuận giữa hai bên."}</p>
       </Clause>
 
@@ -181,16 +276,15 @@ const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(
         Hợp đồng có hiệu lực kể từ ngày ký và được lập thành 02 bản có giá trị pháp lý như nhau, mỗi bên giữ 01 bản.
       </Clause>
 
-      {/* Chữ ký */}
-      <div className="grid grid-cols-2 gap-6 mt-10 text-center">
+      <div className="mt-10 grid grid-cols-2 gap-6 text-center">
         <div>
           <p className="font-bold uppercase">Đại diện Bên A</p>
-          <p className="italic text-xs">(Ký, ghi rõ họ tên)</p>
+          <p className="text-xs italic">(Ký, ghi rõ họ tên)</p>
           <p className="mt-16 font-semibold">{PROVIDER.representative}</p>
         </div>
         <div>
           <p className="font-bold uppercase">Đại diện Bên B</p>
-          <p className="italic text-xs">(Ký, ghi rõ họ tên)</p>
+          <p className="text-xs italic">(Ký, ghi rõ họ tên)</p>
           <p className="mt-16 font-semibold">{customerName}</p>
         </div>
       </div>

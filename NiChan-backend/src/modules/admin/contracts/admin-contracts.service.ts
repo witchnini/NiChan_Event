@@ -1,6 +1,156 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
 import type { CreateContractInput, UpdateContractInput } from "./admin-contracts.schema";
+
+type ContractLineItemInput = NonNullable<CreateContractInput["lineItems"]>[number];
+type StoredContractLineItem = {
+  category: string;
+  description: string | null;
+  unit: string | null;
+  quantity: unknown;
+  unitPrice: unknown;
+  note: string | null;
+};
+
+const lineItemsInclude = {
+  orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
+};
+
+const normalizeAmount = (value: number) => Number(value.toFixed(2));
+
+const normalizeLineItems = (lineItems?: ContractLineItemInput[]) =>
+  (lineItems ?? []).map((item, index) => ({
+    category: item.category.trim(),
+    description: item.description?.trim() || null,
+    unit: item.unit?.trim() || null,
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    amount: normalizeAmount(item.quantity * item.unitPrice),
+    note: item.note?.trim() || null,
+    sortOrder: index,
+  }));
+
+const cloneStoredLineItems = (lineItems?: StoredContractLineItem[]) =>
+  (lineItems ?? []).map((item, index) => {
+    const quantity = Number(item.quantity ?? 0);
+    const unitPrice = Number(item.unitPrice ?? 0);
+    return {
+      category: item.category,
+      description: item.description ?? null,
+      unit: item.unit ?? null,
+      quantity,
+      unitPrice,
+      amount: normalizeAmount(quantity * unitPrice),
+      note: item.note ?? null,
+      sortOrder: index,
+    };
+  });
+
+const sumLineItems = (lineItems: { amount: number }[]) =>
+  normalizeAmount(lineItems.reduce((sum, item) => sum + item.amount, 0));
+
+const ensurePositiveContractTotal = (totalValue: number) => {
+  if (totalValue <= 0) {
+    throw createError("VALIDATION_ERROR", "Contract total value must be positive", 400);
+  }
+};
+
+const parseRatio = (value: string) => Number(value.replace(",", "."));
+
+const isValidPaymentRatios = (ratios: number[]) => {
+  if (ratios.length < 2 || ratios.length > 4) return false;
+  const total = ratios.reduce((sum, ratio) => sum + ratio, 0);
+  return ratios.every((ratio) => ratio > 0 && ratio < 100) && Math.abs(total - 100) <= 1;
+};
+
+const parsePaymentRatios = (paymentTerms?: string | null) => {
+  if (!paymentTerms) return [50, 30, 20];
+
+  const percentRatios = [...paymentTerms.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) =>
+    parseRatio(match[1]),
+  );
+  if (isValidPaymentRatios(percentRatios)) return percentRatios;
+
+  const sequenceMatch = paymentTerms.match(
+    /(?:^|[^\d])(\d+(?:[.,]\d+)?(?:\s*[-/+]\s*\d+(?:[.,]\d+)?){1,3})(?:%|[^\d]|$)/,
+  );
+  if (!sequenceMatch) return [50, 30, 20];
+
+  const sequenceRatios = sequenceMatch[1].split(/\s*[-/+]\s*/).map(parseRatio);
+  return isValidPaymentRatios(sequenceRatios) ? sequenceRatios : [50, 30, 20];
+};
+
+const formatPercent = (value: number) =>
+  Number.isInteger(value)
+    ? String(value)
+    : value.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+
+const installmentAmount = (totalValue: number, ratios: number[], index: number) => {
+  if (index === ratios.length - 1) {
+    const previous = ratios
+      .slice(0, index)
+      .reduce((sum, ratio) => sum + Math.round((totalValue * ratio) / 100), 0);
+    return Math.max(totalValue - previous, 0);
+  }
+  return Math.round((totalValue * ratios[index]) / 100);
+};
+
+const addDays = (date: Date, days: number) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+};
+
+const buildInstallmentDate = (eventDate: Date | null, index: number, total: number, sentAt: Date) => {
+  if (index === 0) return sentAt;
+  if (!eventDate || Number.isNaN(eventDate.getTime())) return addDays(sentAt, index * 7);
+
+  if (index === total - 1) return addDays(eventDate, 1);
+  const daysBeforeEvent = Math.max((total - index) * 7, 3);
+  const dueDate = addDays(eventDate, -daysBeforeEvent);
+  return dueDate > sentAt ? dueDate : addDays(sentAt, index * 7);
+};
+
+const installmentLabel = (index: number, total: number) => {
+  if (index === 0) return "Đặt cọc sau khi ký hợp đồng";
+  if (index === total - 1) return "Thanh toán sau nghiệm thu";
+  return "Thanh toán trước ngày tổ chức";
+};
+
+const ensureContractPaymentSchedule = async (
+  tx: Prisma.TransactionClient,
+  input: {
+    contractId: string;
+    contractCode: string;
+    eventId: string;
+    eventDate: Date | null;
+    totalValue: unknown;
+    paymentTerms?: string | null;
+    sentAt: Date;
+  },
+) => {
+  const existingTransactions = await tx.transaction.count({
+    where: { contractId: input.contractId },
+  });
+  if (existingTransactions > 0) return;
+
+  const totalValue = Number(input.totalValue || 0);
+  if (totalValue <= 0) return;
+
+  const ratios = parsePaymentRatios(input.paymentTerms);
+  await tx.transaction.createMany({
+    data: ratios.map((ratio, index) => ({
+      eventId: input.eventId,
+      contractId: input.contractId,
+      description: `Thanh toán ${input.contractCode} - Đợt ${index + 1}: ${installmentLabel(index, ratios.length)} (${formatPercent(ratio)}%)`,
+      amount: installmentAmount(totalValue, ratios, index),
+      transactionDate: buildInstallmentDate(input.eventDate, index, ratios.length, input.sentAt),
+      paymentMethod: null,
+      status: "pending",
+    })),
+  });
+};
 
 export const listContracts = async (filters: {
   status?: string;
@@ -43,7 +193,11 @@ export const listContracts = async (filters: {
         },
         customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
         createdBy: { select: { id: true, displayName: true } },
-        versions: { take: 1, orderBy: { createdAt: "desc" } },
+        versions: {
+          take: 1,
+          orderBy: { createdAt: "desc" },
+          include: { lineItems: lineItemsInclude },
+        },
       },
     }),
     prisma.contract.count({ where }),
@@ -72,7 +226,10 @@ export const getContractById = async (id: string) => {
       },
       customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
       createdBy: { select: { id: true, displayName: true } },
-      versions: { orderBy: { createdAt: "desc" } },
+      versions: {
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: lineItemsInclude },
+      },
       documents: true,
     },
   });
@@ -86,13 +243,16 @@ export const createContract = async (input: CreateContractInput, createdById: st
     where: { contractCode: { startsWith: `HD-${year}-` } },
   });
   const contractCode = `HD-${year}-${String(count + 1).padStart(3, "0")}`;
+  const lineItems = normalizeLineItems(input.lineItems);
+  const totalValue = lineItems.length > 0 ? sumLineItems(lineItems) : input.totalValue ?? 0;
+  ensurePositiveContractTotal(totalValue);
 
   const contract = await prisma.contract.create({
     data: {
       contractCode,
       eventId: input.eventId,
       customerUserId: input.customerUserId,
-      totalValue: input.totalValue,
+      totalValue,
       currentVersion: input.versionLabel,
       createdById,
       status: "draft",
@@ -103,10 +263,11 @@ export const createContract = async (input: CreateContractInput, createdById: st
           paymentTerms: input.paymentTerms,
           generalTerms: input.generalTerms,
           createdById,
+          ...(lineItems.length > 0 ? { lineItems: { create: lineItems } } : {}),
         },
       },
     },
-    include: { versions: true },
+    include: { versions: { include: { lineItems: lineItemsInclude } } },
   });
 
   return contract;
@@ -117,11 +278,36 @@ export const updateContract = async (
   input: UpdateContractInput,
   updatedById: string,
 ) => {
-  const existing = await prisma.contract.findUnique({ where: { id } });
+  const existing = await prisma.contract.findUnique({
+    where: { id },
+    include: {
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: lineItemsInclude },
+      },
+    },
+  });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
 
   const hasContentChange =
-    input.scopeText || input.paymentTerms || input.generalTerms || input.versionLabel;
+    input.scopeText !== undefined ||
+    input.paymentTerms !== undefined ||
+    input.generalTerms !== undefined ||
+    input.versionLabel !== undefined ||
+    input.lineItems !== undefined;
+  const latestVersion = existing.versions[0];
+  const nextLineItems =
+    input.lineItems !== undefined
+      ? normalizeLineItems(input.lineItems)
+      : cloneStoredLineItems(latestVersion?.lineItems);
+  const nextTotalValue =
+    input.lineItems !== undefined
+      ? sumLineItems(nextLineItems)
+      : input.totalValue !== undefined
+        ? input.totalValue
+        : Number(existing.totalValue);
+  ensurePositiveContractTotal(nextTotalValue);
 
   return prisma.$transaction(async (tx) => {
     if (hasContentChange) {
@@ -130,10 +316,11 @@ export const updateContract = async (
         data: {
           contractId: id,
           versionLabel,
-          scopeText: input.scopeText ?? "",
-          paymentTerms: input.paymentTerms ?? "",
-          generalTerms: input.generalTerms ?? "",
+          scopeText: input.scopeText ?? latestVersion?.scopeText ?? "",
+          paymentTerms: input.paymentTerms ?? latestVersion?.paymentTerms ?? "",
+          generalTerms: input.generalTerms ?? latestVersion?.generalTerms ?? "",
           createdById: updatedById,
+          ...(nextLineItems.length > 0 ? { lineItems: { create: nextLineItems } } : {}),
         },
       });
     }
@@ -141,7 +328,9 @@ export const updateContract = async (
     return tx.contract.update({
       where: { id },
       data: {
-        ...(input.totalValue !== undefined ? { totalValue: input.totalValue } : {}),
+        ...(input.totalValue !== undefined || input.lineItems !== undefined
+          ? { totalValue: nextTotalValue }
+          : {}),
         ...(input.versionLabel !== undefined ? { currentVersion: input.versionLabel } : {}),
       },
     });
@@ -152,8 +341,12 @@ export const sendContract = async (id: string, sentById: string) => {
   const existing = await prisma.contract.findUnique({
     where: { id },
     include: {
-      event: { select: { id: true, name: true } },
-      versions: { take: 1, orderBy: { createdAt: "desc" }, select: { documentUrl: true } },
+      event: { select: { id: true, name: true, eventDate: true } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: { documentUrl: true, paymentTerms: true },
+      },
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
@@ -163,9 +356,20 @@ export const sendContract = async (id: string, sentById: string) => {
   const documentUrl = existing.versions[0]?.documentUrl ?? "";
 
   return prisma.$transaction(async (tx) => {
+    const sentAt = new Date();
     const contract = await tx.contract.update({
       where: { id },
-      data: { status: "sent", sentAt: new Date() },
+      data: { status: "sent", sentAt },
+    });
+
+    await ensureContractPaymentSchedule(tx, {
+      contractId: id,
+      contractCode: existing.contractCode,
+      eventId: existing.eventId,
+      eventDate: existing.event.eventDate,
+      totalValue: existing.totalValue,
+      paymentTerms: existing.versions[0]?.paymentTerms,
+      sentAt,
     });
 
     // Tạo bản ghi tài liệu để hợp đồng hiển thị trong phần "Tài liệu" của khách hàng.
@@ -189,7 +393,7 @@ export const sendContract = async (id: string, sentById: string) => {
           eventId: existing.eventId,
           actorUserId: sentById,
           iconName: "file-text",
-          message: `Đã gửi hợp đồng ${existing.contractCode} cho khách hàng.`,
+          message: `Đã gửi hợp đồng ${existing.contractCode} và tự động tạo lịch thanh toán cho khách hàng.`,
         },
       });
     }
@@ -201,6 +405,7 @@ export const sendContract = async (id: string, sentById: string) => {
 export const deleteContract = async (id: string) => {
   const existing = await prisma.contract.findUnique({ where: { id } });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
+  await prisma.contractLineItem.deleteMany({ where: { contractVersion: { contractId: id } } });
   await prisma.contractVersion.deleteMany({ where: { contractId: id } });
   await prisma.contract.delete({ where: { id } });
 };

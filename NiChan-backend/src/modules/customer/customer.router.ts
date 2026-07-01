@@ -21,6 +21,7 @@ import {
   submitCustomerInstallmentPayment,
   submitCustomerPayment,
   submitReview,
+  updateReview,
 } from "./customer.service";
 
 export const customerRouter = Router();
@@ -128,6 +129,12 @@ customerRouter.patch("/transactions/:id/pay", async (req: Request, res: Response
 customerRouter.post("/reviews", async (req: Request, res: Response) => {
   const data = await submitReview(req.user!.userId, req.body);
   sendSuccess(res, { data, status: 201 });
+});
+
+// PATCH /api/customer/reviews/:id
+customerRouter.patch("/reviews/:id", async (req: Request, res: Response) => {
+  const data = await updateReview(req.user!.userId, p(req, "id"), req.body);
+  sendSuccess(res, { data });
 });
 
 // GET /api/customer/reviews

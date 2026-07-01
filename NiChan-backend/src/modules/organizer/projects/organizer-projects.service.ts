@@ -12,6 +12,10 @@ import type {
   UpdateTaskStatusInput,
 } from "./organizer-projects.schema";
 
+const contractLineItemsInclude = {
+  orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
+};
+
 // ─── Projects List ────────────────────────────────────────────────────────────
 
 export const listOrganizerProjects = async (organizerUserId: string) => {
@@ -100,7 +104,15 @@ export const getOrganizerProjectContracts = async (
       },
       customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
       createdBy: { select: { id: true, displayName: true } },
-      versions: { take: 1, orderBy: { createdAt: "desc" } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: contractLineItemsInclude },
+      },
+      transactions: {
+        where: { status: { in: ["pending", "completed"] } },
+        select: { id: true, amount: true, status: true, paymentMethod: true },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -132,7 +144,15 @@ export const getOrganizerContractById = async (
       },
       customerUser: { select: { id: true, displayName: true, phone: true, email: true } },
       createdBy: { select: { id: true, displayName: true } },
-      versions: { take: 1, orderBy: { createdAt: "desc" } },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: contractLineItemsInclude },
+      },
+      transactions: {
+        where: { status: { in: ["pending", "completed"] } },
+        select: { id: true, amount: true, status: true, paymentMethod: true },
+      },
       documents: true,
     },
   });

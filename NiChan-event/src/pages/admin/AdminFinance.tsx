@@ -94,6 +94,7 @@ type FinanceContract = {
   pendingAmount: number;
   outstandingAmount: number;
   currentVersion: string;
+  paymentTerms?: string | null;
   sentAt?: string | null;
   signedAt?: string | null;
   event?: EventRef | null;
@@ -114,6 +115,19 @@ type Transaction = {
 };
 
 type Project = EventRef;
+
+type PaymentPlan = {
+  key: string;
+  name: string;
+  ratios: number[];
+};
+
+type PaymentTemplate = {
+  value: string;
+  description: string;
+  amount: number;
+  planName: string;
+};
 
 const moneyShort = (value: number) => {
   const amount = Math.abs(Number(value || 0));
@@ -183,6 +197,84 @@ const toDatetimeLocal = (iso: string) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
+const defaultPaymentPlans: PaymentPlan[] = [
+  { key: "two-installments", name: "2 đợt 50/50", ratios: [50, 50] },
+  { key: "three-installments", name: "3 đợt 50/30/20", ratios: [50, 30, 20] },
+];
+
+const parseRatio = (value: string) => Number(value.replace(",", "."));
+
+const isValidPaymentRatios = (ratios: number[]) => {
+  if (ratios.length < 2 || ratios.length > 3) return false;
+  const total = ratios.reduce((sum, ratio) => sum + ratio, 0);
+  return ratios.every((ratio) => ratio > 0 && ratio < 100) && Math.abs(total - 100) <= 1;
+};
+
+const ratioKey = (ratios: number[]) =>
+  ratios.map((ratio) => Number(ratio.toFixed(2))).join("-");
+
+const parsePaymentRatios = (paymentTerms?: string | null) => {
+  if (!paymentTerms) return [];
+  const percentRatios = [...paymentTerms.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)]
+    .map((match) => parseRatio(match[1]));
+  if (isValidPaymentRatios(percentRatios)) return percentRatios;
+
+  const sequenceMatch = paymentTerms.match(
+    /(?:^|[^\d])(\d+(?:[.,]\d+)?(?:\s*[-/+]\s*\d+(?:[.,]\d+)?){1,2})(?:%|[^\d]|$)/,
+  );
+  if (!sequenceMatch) return [];
+
+  const sequenceRatios = sequenceMatch[1].split(/\s*[-/+]\s*/).map(parseRatio);
+  return isValidPaymentRatios(sequenceRatios) ? sequenceRatios : [];
+};
+
+const formatPercent = (value: number) =>
+  Number.isInteger(value)
+    ? String(value)
+    : value.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+
+const installmentAmount = (totalValue: number, ratios: number[], index: number) => {
+  if (index === ratios.length - 1) {
+    const previous = ratios
+      .slice(0, index)
+      .reduce((sum, ratio) => sum + Math.round((totalValue * ratio) / 100), 0);
+    return Math.max(totalValue - previous, 0);
+  }
+  return Math.round((totalValue * ratios[index]) / 100);
+};
+
+const buildPaymentTemplates = (contract?: FinanceContract | null): PaymentTemplate[] => {
+  if (!contract) return [];
+
+  const plans: PaymentPlan[] = [];
+  const contractRatios = parsePaymentRatios(contract.paymentTerms);
+  if (contractRatios.length) {
+    plans.push({ key: "contract-terms", name: "Theo điều khoản HĐ", ratios: contractRatios });
+  }
+
+  const seen = new Set(plans.map((plan) => ratioKey(plan.ratios)));
+  for (const plan of defaultPaymentPlans) {
+    const key = ratioKey(plan.ratios);
+    if (!seen.has(key)) {
+      plans.push(plan);
+      seen.add(key);
+    }
+  }
+
+  const totalValue = Number(contract.totalValue || 0);
+  return plans.flatMap((plan) =>
+    plan.ratios.map((ratio, index) => {
+      const description = `Đợt ${index + 1} (${formatPercent(ratio)}%)`;
+      return {
+        value: `${plan.key}-${index}`,
+        description,
+        amount: installmentAmount(totalValue, plan.ratios, index),
+        planName: plan.name,
+      };
+    }),
+  );
+};
+
 const AdminFinance = () => {
   const [projectFinance, setProjectFinance] = useState<ProjectFinance[]>([]);
   const [monthlyPL, setMonthlyPL] = useState<MonthlyPL[]>([]);
@@ -201,6 +293,7 @@ const AdminFinance = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<Transaction | null>(null);
   const [form, setForm] = useState(emptyTxForm);
+  const [paymentTemplate, setPaymentTemplate] = useState("manual");
   const [saving, setSaving] = useState(false);
 
   const loadDashboard = async () => {
@@ -336,36 +429,72 @@ const AdminFinance = () => {
     [contracts, txEventFilter],
   );
 
+  const selectedFormContract = useMemo(
+    () => contracts.find((contract) => contract.id === form.contractId) ?? null,
+    [contracts, form.contractId],
+  );
+
+  const paymentTemplates = useMemo(
+    () => buildPaymentTemplates(selectedFormContract),
+    [selectedFormContract],
+  );
+
   const selectFormEvent = (eventId: string) => {
-    setForm((prev) => {
-      const selectedContract = contracts.find((contract) => contract.id === prev.contractId);
-      return {
-        ...prev,
-        eventId: eventId === "none" ? "" : eventId,
-        contractId:
-          selectedContract && selectedContract.event?.id === eventId ? prev.contractId : "",
-      };
-    });
+    const normalizedEventId = eventId === "none" ? "" : eventId;
+    const selectedContract = contracts.find((contract) => contract.id === form.contractId);
+    const keepContract = Boolean(
+      selectedContract && selectedContract.event?.id === normalizedEventId,
+    );
+    if (!keepContract) setPaymentTemplate("manual");
+    setForm((prev) => ({
+      ...prev,
+      eventId: normalizedEventId,
+      contractId: keepContract ? prev.contractId : "",
+    }));
   };
 
   const selectFormContract = (contractId: string) => {
     if (contractId === "none") {
+      setPaymentTemplate("manual");
       setForm((prev) => ({ ...prev, contractId: "" }));
       return;
     }
 
     const contract = contracts.find((item) => item.id === contractId);
+    const templates = buildPaymentTemplates(contract);
+    const template = templates[0];
+    const shouldApplyTemplate = Boolean(
+      template && (!form.description.trim() || !form.amount || paymentTemplate !== "manual"),
+    );
+    setPaymentTemplate(shouldApplyTemplate && template ? template.value : "manual");
     setForm((prev) => ({
       ...prev,
       contractId,
       eventId: contract?.event?.id ?? prev.eventId,
-      amount: prev.amount || String(contract?.outstandingAmount || contract?.totalValue || ""),
-      description: prev.description || `Thanh toán ${contract?.contractCode ?? ""}`.trim(),
+      amount: shouldApplyTemplate && template
+        ? String(template.amount)
+        : prev.amount || String(contract?.outstandingAmount || contract?.totalValue || ""),
+      description: shouldApplyTemplate && template
+        ? template.description
+        : prev.description || `Thanh toán ${contract?.contractCode ?? ""}`.trim(),
+    }));
+  };
+
+  const selectPaymentTemplate = (value: string) => {
+    setPaymentTemplate(value);
+    if (value === "manual") return;
+    const template = paymentTemplates.find((item) => item.value === value);
+    if (!template) return;
+    setForm((prev) => ({
+      ...prev,
+      description: template.description,
+      amount: String(template.amount),
     }));
   };
 
   const openCreate = () => {
     setForm({ ...emptyTxForm, transactionDate: toDatetimeLocal(new Date().toISOString()) });
+    setPaymentTemplate("manual");
     setCreateOpen(true);
     void loadProjects();
   };
@@ -380,6 +509,7 @@ const AdminFinance = () => {
       paymentMethod: transaction.paymentMethod ?? "",
       status: transaction.status,
     });
+    setPaymentTemplate("manual");
     setEditItem(transaction);
     void loadProjects();
   };
@@ -423,6 +553,7 @@ const AdminFinance = () => {
       toast.success("Đã tạo giao dịch");
       setCreateOpen(false);
       setForm(emptyTxForm);
+      setPaymentTemplate("manual");
       await refreshAll();
     } catch {
       toast.error("Tạo giao dịch thất bại");
@@ -509,11 +640,31 @@ const AdminFinance = () => {
         </div>
       </div>
 
+      {selectedFormContract && (
+        <div>
+          <label className="font-body text-sm text-foreground mb-1 block">Mẫu thanh toán</label>
+          <Select value={paymentTemplate} onValueChange={selectPaymentTemplate}>
+            <SelectTrigger className="rounded-xl"><SelectValue placeholder="Chọn đợt thanh toán" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="manual">Nhập thủ công</SelectItem>
+              {paymentTemplates.map((template) => (
+                <SelectItem key={template.value} value={template.value}>
+                  {template.planName}: {template.description} - {moneyShort(template.amount)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <div>
         <label className="font-body text-sm text-foreground mb-1 block">Mô tả *</label>
         <Input
           value={form.description}
-          onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+          onChange={(event) => {
+            setPaymentTemplate("manual");
+            setForm((prev) => ({ ...prev, description: event.target.value }));
+          }}
           placeholder="VD: Thanh toán đợt 1"
           className="rounded-xl bg-surface-lowest font-body border-none"
         />
@@ -526,7 +677,10 @@ const AdminFinance = () => {
             type="number"
             min={0}
             value={form.amount}
-            onChange={(event) => setForm((prev) => ({ ...prev, amount: event.target.value }))}
+            onChange={(event) => {
+              setPaymentTemplate("manual");
+              setForm((prev) => ({ ...prev, amount: event.target.value }));
+            }}
             className="rounded-xl bg-surface-lowest font-body border-none"
           />
         </div>

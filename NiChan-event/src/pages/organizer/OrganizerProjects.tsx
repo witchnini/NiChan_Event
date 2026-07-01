@@ -578,6 +578,8 @@ const OrganizerProjects = () => {
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
   const [customTaskMode, setCustomTaskMode] = useState(false);
+  const [taskTemplateSearch, setTaskTemplateSearch] = useState("");
+  const [selectedTaskTemplateIds, setSelectedTaskTemplateIds] = useState<string[]>([]);
   const [targetStatus, setTargetStatus] = useState("todo");
   const [form, setForm] = useState(emptyForm);
   const [vendorForm, setVendorForm] = useState(emptyVendorForm);
@@ -656,6 +658,41 @@ const OrganizerProjects = () => {
 
   const budgetItems = useMemo(() => projectBudget?.items ?? [], [projectBudget]);
   const projectBudgetAlert = projectBudget?.budgetHealth?.alerts?.[0] ?? null;
+  const contractFinancials = useMemo(() => {
+    const contractStats = projectContracts.map((contract) => {
+      const transactions = contract.transactions ?? [];
+      const totalValue = Number(contract.totalValue || 0);
+      const paid = transactions
+        .filter((transaction) => transaction.status === "completed")
+        .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+      const pending = transactions
+        .filter((transaction) => transaction.status === "pending" && transaction.paymentMethod)
+        .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+      const scheduled = transactions
+        .filter((transaction) => transaction.status === "pending" && !transaction.paymentMethod)
+        .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+
+      return {
+        id: contract.id,
+        contractCode: contract.contractCode,
+        totalValue,
+        paid,
+        pending,
+        scheduled,
+        remaining: Math.max(totalValue - paid - pending, 0),
+        lineItemCount: contract.versions?.[0]?.lineItems?.length ?? 0,
+      };
+    });
+
+    return {
+      contracts: contractStats,
+      totalValue: contractStats.reduce((sum, contract) => sum + contract.totalValue, 0),
+      paid: contractStats.reduce((sum, contract) => sum + contract.paid, 0),
+      pending: contractStats.reduce((sum, contract) => sum + contract.pending, 0),
+      scheduled: contractStats.reduce((sum, contract) => sum + contract.scheduled, 0),
+      remaining: contractStats.reduce((sum, contract) => sum + contract.remaining, 0),
+    };
+  }, [projectContracts]);
 
   const vendorBudgetStats = useMemo(() => {
     return budgetItems.reduce<Record<string, { count: number; estimated: number; actual: number }>>((acc, item) => {
@@ -724,10 +761,31 @@ const OrganizerProjects = () => {
     () => serviceTaskTemplates.filter((template) => !usedTaskTitles.has(normalizeTaskTitle(template.title))),
     [serviceTaskTemplates, usedTaskTitles],
   );
-  const selectedTemplate = useMemo(
-    () => serviceTaskTemplates.find((template) => template.title === form.title) ?? null,
-    [form.title, serviceTaskTemplates],
+  const filteredServiceTaskTemplates = useMemo(() => {
+    const keyword = normalizeTemplateText(taskTemplateSearch).trim();
+    if (!keyword) return serviceTaskTemplates;
+
+    return serviceTaskTemplates.filter((template) =>
+      [
+        template.phase,
+        template.title,
+        template.description,
+        priorityLabel[template.priority],
+      ].some((value) => normalizeTemplateText(value).includes(keyword)),
+    );
+  }, [serviceTaskTemplates, taskTemplateSearch]);
+  const selectedTaskTemplates = useMemo(
+    () => serviceTaskTemplates.filter((template) => selectedTaskTemplateIds.includes(template.id)),
+    [selectedTaskTemplateIds, serviceTaskTemplates],
   );
+  const canSaveTask = editingTask || customTaskMode
+    ? !!form.title.trim()
+    : selectedTaskTemplates.length > 0;
+  const saveTaskLabel = editingTask
+    ? "Cập nhật"
+    : !customTaskMode && selectedTaskTemplates.length > 1
+      ? `Thêm ${selectedTaskTemplates.length} công việc`
+      : "Thêm";
   const overdueTasks = useMemo(
     () => allTasks.filter((task) => task.status !== "done" && isOverdue(task.dueAt)).length,
     [allTasks],
@@ -916,13 +974,53 @@ const OrganizerProjects = () => {
     };
   };
 
-  const selectTaskTemplate = (template: TaskTemplate) => {
+  const toggleTaskTemplate = (template: TaskTemplate) => {
+    if (usedTaskTitles.has(normalizeTaskTitle(template.title))) return;
+
     setCustomTaskMode(false);
-    setForm((current) => buildTaskFormFromTemplate(template, current.assigneeUserId));
+    const selected = selectedTaskTemplateIds.includes(template.id);
+    const nextIds = selected
+      ? selectedTaskTemplateIds.filter((id) => id !== template.id)
+      : [...selectedTaskTemplateIds, template.id];
+    const primaryTemplate = selected
+      ? serviceTaskTemplates.find((item) => item.id === nextIds[0])
+      : template;
+
+    setSelectedTaskTemplateIds(nextIds);
+    setForm((current) =>
+      primaryTemplate
+        ? buildTaskFormFromTemplate(primaryTemplate, current.assigneeUserId)
+        : { ...emptyForm, assigneeUserId: current.assigneeUserId },
+    );
+  };
+
+  const selectTemplateMode = () => {
+    setCustomTaskMode(false);
+    const firstTemplate = missingServiceTaskTemplates[0];
+    setSelectedTaskTemplateIds(firstTemplate ? [firstTemplate.id] : []);
+    if (firstTemplate) {
+      setForm((current) => buildTaskFormFromTemplate(firstTemplate, current.assigneeUserId));
+    }
+  };
+
+  const selectAllMissingTemplates = () => {
+    setCustomTaskMode(false);
+    const selectableTemplates = missingServiceTaskTemplates;
+    setSelectedTaskTemplateIds(selectableTemplates.map((template) => template.id));
+    const firstTemplate = selectableTemplates[0];
+    if (firstTemplate) {
+      setForm((current) => buildTaskFormFromTemplate(firstTemplate, current.assigneeUserId));
+    }
+  };
+
+  const clearSelectedTemplates = () => {
+    setSelectedTaskTemplateIds([]);
+    setForm((current) => ({ ...emptyForm, assigneeUserId: current.assigneeUserId }));
   };
 
   const selectCustomTask = () => {
     setCustomTaskMode(true);
+    setSelectedTaskTemplateIds([]);
     setForm((current) => ({
       ...emptyForm,
       assigneeUserId: current.assigneeUserId,
@@ -934,7 +1032,9 @@ const OrganizerProjects = () => {
 
     setTargetStatus(columnId);
     setEditingTask(null);
+    setTaskTemplateSearch("");
     setCustomTaskMode(!firstTemplate);
+    setSelectedTaskTemplateIds(firstTemplate ? [firstTemplate.id] : []);
     setForm(firstTemplate ? buildTaskFormFromTemplate(firstTemplate) : emptyForm);
     setDialogOpen(true);
   };
@@ -943,6 +1043,8 @@ const OrganizerProjects = () => {
     setTargetStatus(task.status);
     setEditingTask(task);
     setCustomTaskMode(false);
+    setTaskTemplateSearch("");
+    setSelectedTaskTemplateIds([]);
     setForm({
       title: task.title,
       description: task.description || "",
@@ -954,21 +1056,54 @@ const OrganizerProjects = () => {
   };
 
   const saveTask = async () => {
-    if (!selectedProjectId || !form.title.trim()) return;
-    if (!editingTask && usedTaskTitles.has(normalizeTaskTitle(form.title))) {
-      toast.error("Công việc này đã có trong dự án");
-      return;
-    }
-
-    const payload = {
-      title: form.title.trim(),
-      description: form.description.trim() || undefined,
-      assigneeUserId: form.assigneeUserId || null,
-      dueAt: toApiDateTime(form.dueAt),
-      priority: form.priority,
-    };
+    if (!selectedProjectId) return;
 
     try {
+      if (!editingTask && !customTaskMode) {
+        if (selectedTaskTemplates.length === 0) {
+          toast.error("Hãy chọn ít nhất một việc mẫu");
+          return;
+        }
+
+        await Promise.all(
+          selectedTaskTemplates.map((template, index) => {
+            const taskForm = selectedTaskTemplates.length === 1
+              ? form
+              : buildTaskFormFromTemplate(template, form.assigneeUserId);
+
+            return apiClient.post("/organizer/tasks", {
+              title: taskForm.title.trim(),
+              description: taskForm.description.trim() || undefined,
+              assigneeUserId: taskForm.assigneeUserId || null,
+              dueAt: toApiDateTime(taskForm.dueAt),
+              priority: taskForm.priority,
+              eventId: selectedProjectId,
+              status: targetStatus,
+              sortOrder: index,
+            });
+          }),
+        );
+
+        toast.success(`Đã thêm ${selectedTaskTemplates.length} công việc`);
+        setDialogOpen(false);
+        await refresh();
+        return;
+      }
+
+      if (!form.title.trim()) return;
+      if (!editingTask && usedTaskTitles.has(normalizeTaskTitle(form.title))) {
+        toast.error("Công việc này đã có trong dự án");
+        return;
+      }
+
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim() || undefined,
+        assigneeUserId: form.assigneeUserId || null,
+        dueAt: toApiDateTime(form.dueAt),
+        priority: form.priority,
+      };
+
       if (editingTask) {
         await apiClient.put(`/organizer/tasks/${editingTask.id}`, payload);
         toast.success("Đã cập nhật công việc");
@@ -986,33 +1121,6 @@ const OrganizerProjects = () => {
       await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Không thể lưu công việc");
-    }
-  };
-
-  const createMissingTemplateTasks = async () => {
-    if (!selectedProjectId || missingServiceTaskTemplates.length === 0) return;
-
-    try {
-      await Promise.all(
-        missingServiceTaskTemplates.map((template, index) => {
-          const taskForm = buildTaskFormFromTemplate(template);
-          return apiClient.post("/organizer/tasks", {
-            title: taskForm.title,
-            description: taskForm.description || undefined,
-            assigneeUserId: null,
-            dueAt: toApiDateTime(taskForm.dueAt),
-            priority: taskForm.priority,
-            eventId: selectedProjectId,
-            status: "todo",
-            sortOrder: index,
-          });
-        }),
-      );
-
-      toast.success(`Đã tạo ${missingServiceTaskTemplates.length} công việc theo checklist`);
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không thể tạo checklist công việc");
     }
   };
 
@@ -1487,8 +1595,34 @@ const OrganizerProjects = () => {
 
               <div className="2xl:col-span-2 bg-surface-lowest rounded-xl p-5 shadow-ambient">
                 <h3 className="font-serif text-headline-md text-foreground mb-4">Hợp đồng</h3>
+                {projectContracts.length > 0 && (
+                  <div className="grid grid-cols-2 xl:grid-cols-5 gap-3 mb-4">
+                    <div className="rounded-lg bg-surface-low p-3">
+                      <p className="font-body text-[11px] text-muted-foreground">Giá trị HĐ</p>
+                      <p className="font-body text-sm font-semibold text-foreground mt-1">{formatCurrency(contractFinancials.totalValue)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-low p-3">
+                      <p className="font-body text-[11px] text-muted-foreground">Đã thu</p>
+                      <p className="font-body text-sm font-semibold text-secondary mt-1">{formatCurrency(contractFinancials.paid)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-low p-3">
+                      <p className="font-body text-[11px] text-muted-foreground">Chờ xác nhận</p>
+                      <p className="font-body text-sm font-semibold text-primary mt-1">{formatCurrency(contractFinancials.pending)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-low p-3">
+                      <p className="font-body text-[11px] text-muted-foreground">Theo lịch</p>
+                      <p className="font-body text-sm font-semibold text-foreground mt-1">{formatCurrency(contractFinancials.scheduled)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-low p-3">
+                      <p className="font-body text-[11px] text-muted-foreground">Còn thu</p>
+                      <p className="font-body text-sm font-semibold text-primary mt-1">{formatCurrency(contractFinancials.remaining)}</p>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-3">
-                  {projectContracts.map((contract) => (
+                  {projectContracts.map((contract) => {
+                    const contractStats = contractFinancials.contracts.find((item) => item.id === contract.id);
+                    return (
                     <div key={contract.contractCode} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-border p-4">
                       <div>
                         <p className="font-body text-sm font-semibold text-foreground">
@@ -1499,6 +1633,12 @@ const OrganizerProjects = () => {
                           Giá trị: {Number(contract.totalValue || 0).toLocaleString("vi-VN")} ₫
                           {contract.sentAt ? ` · Đã gửi ${new Date(contract.sentAt).toLocaleDateString("vi-VN")}` : ""}
                         </p>
+                        {contractStats && (
+                          <p className="font-body text-xs text-muted-foreground mt-1">
+                            Đã thu {formatCurrency(contractStats.paid)} · Theo lịch {formatCurrency(contractStats.scheduled)} · Còn thu {formatCurrency(contractStats.remaining)}
+                            {contractStats.lineItemCount > 0 ? ` · ${contractStats.lineItemCount} hạng mục` : ""}
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <Button variant="outline" size="sm" onClick={() => navigate(`/ban-to-chuc/hop-dong/${contract.id}`)}>
@@ -1507,7 +1647,7 @@ const OrganizerProjects = () => {
                         <ContractPdfButton contract={contract} detailPath={`/organizer/contracts/${contract.id}`} variant="outline" label="Tải PDF" />
                       </div>
                     </div>
-                  ))}
+                  )})}
                   {projectContracts.length === 0 && (
                     <p className="font-body text-sm text-muted-foreground">Chưa có hợp đồng cho dự án này.</p>
                   )}
@@ -1528,18 +1668,17 @@ const OrganizerProjects = () => {
                       Checklist vận hành {taskTemplateGroup.label}
                     </h3>
                     <p className="mt-1 font-body text-sm text-muted-foreground">
-                      {serviceTaskTemplates.length - missingServiceTaskTemplates.length}/{serviceTaskTemplates.length} công việc đã có trong dự án
+                      Chọn việc mẫu hoặc tạo việc mới cho dự án · {serviceTaskTemplates.length - missingServiceTaskTemplates.length}/{serviceTaskTemplates.length} việc mẫu đã có
                     </p>
                   </div>
                 </div>
                 <Button
                   variant="hero"
                   size="sm"
-                  onClick={createMissingTemplateTasks}
-                  disabled={missingServiceTaskTemplates.length === 0}
+                  onClick={() => openAdd("todo")}
                   className="shrink-0 rounded-xl"
                 >
-                  <Plus size={14} /> Tạo {missingServiceTaskTemplates.length} việc còn thiếu
+                  <Plus size={14} /> Thêm công việc
                 </Button>
               </div>
 
@@ -2174,171 +2313,255 @@ const OrganizerProjects = () => {
       </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[calc(100dvh-1.5rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+          <DialogHeader className="shrink-0 border-b border-border px-5 py-4 pr-12">
             <DialogTitle className="font-serif">{editingTask ? "Sửa công việc" : "Thêm công việc mới"}</DialogTitle>
             {!editingTask && (
-              <DialogDescription>
-                Chọn từ checklist {taskTemplateGroup.label} hoặc thêm công việc tùy chỉnh khi dự án phát sinh việc ngoài mẫu.
+              <DialogDescription className="line-clamp-2">
+                Chọn nhanh từ checklist {taskTemplateGroup.label} hoặc tạo công việc mới khi dự án phát sinh việc ngoài mẫu.
               </DialogDescription>
             )}
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <label className="font-body text-sm text-foreground">Công việc cần làm</label>
-                {!editingTask && customTaskMode && (
-                  <span className="rounded-full bg-muted px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
-                    Tùy chỉnh
-                  </span>
-                )}
-                {!editingTask && !customTaskMode && selectedTemplate && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-primary">
-                    {selectedTemplate.phase}
-                  </span>
-                )}
-              </div>
-              {editingTask ? (
-                <Input
-                  value={form.title}
-                  disabled
-                  className="rounded-xl border-none bg-surface-low"
-                />
-              ) : (
-                <div className="grid max-h-[300px] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                  {serviceTaskTemplates.map((template) => {
-                    const alreadyAdded = usedTaskTitles.has(normalizeTaskTitle(template.title));
-                    const selected = !customTaskMode && form.title === template.title;
-                    const templateForm = buildTaskFormFromTemplate(template, form.assigneeUserId);
-
-                    return (
-                      <button
-                        key={template.id}
-                        type="button"
-                        disabled={alreadyAdded}
-                        onClick={() => selectTaskTemplate(template)}
-                        className={`min-h-[132px] rounded-xl border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-45 ${
-                          selected
-                            ? "border-primary bg-primary/10"
-                            : "border-border bg-surface-low hover:border-primary/60 hover:bg-surface-high"
-                        }`}
-                      >
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
-                            {template.phase}
-                          </span>
-                          <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${priorityColors[template.priority]}`}>
-                            {priorityLabel[template.priority]}
-                          </span>
-                          {alreadyAdded && (
-                            <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-secondary">
-                              Đã có
-                            </span>
-                          )}
-                        </div>
-                        <p className="font-body text-sm font-semibold leading-snug text-foreground">
-                          {template.title}
-                        </p>
-                        <p className="mt-1 line-clamp-2 font-body text-xs leading-relaxed text-muted-foreground">
-                          {template.description}
-                        </p>
-                        <p className="mt-2 font-body text-[11px] font-semibold text-muted-foreground">
-                          Deadline: {templateForm.dueAt ? formatDate(templateForm.dueAt) : "Chưa có hạn"}
-                        </p>
-                      </button>
-                    );
-                  })}
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+            <div className="space-y-3">
+              {!editingTask && (
+                <div className="grid grid-cols-2 gap-2 rounded-xl bg-surface-low p-1">
+                  <button
+                    type="button"
+                    onClick={selectTemplateMode}
+                    className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 font-body text-sm font-semibold transition ${
+                      !customTaskMode
+                        ? "bg-background text-foreground shadow-ambient"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <ListChecks size={15} /> Việc mẫu
+                  </button>
                   <button
                     type="button"
                     onClick={selectCustomTask}
-                    className={`min-h-[132px] rounded-xl border p-3 text-left transition-all ${
+                    className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 font-body text-sm font-semibold transition ${
                       customTaskMode
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-surface-low hover:border-primary/60 hover:bg-surface-high"
+                        ? "bg-background text-foreground shadow-ambient"
+                        : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
-                        Phát sinh
-                      </span>
-                      <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${priorityColors.medium}`}>
-                        Linh hoạt
-                      </span>
-                    </div>
-                    <p className="font-body text-sm font-semibold leading-snug text-foreground">
-                      Công việc tùy chỉnh
-                    </p>
-                    <p className="mt-1 line-clamp-2 font-body text-xs leading-relaxed text-muted-foreground">
-                      Dùng khi dự án có yêu cầu riêng chưa nằm trong checklist dịch vụ.
-                    </p>
-                    <p className="mt-2 font-body text-[11px] font-semibold text-muted-foreground">
-                      Organizer tự nhập tên, mô tả và deadline
-                    </p>
+                    <Plus size={15} /> Việc mới
                   </button>
                 </div>
               )}
+
+              {editingTask ? (
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Công việc</label>
+                  <Input
+                    value={form.title}
+                    disabled
+                    className="rounded-xl border-none bg-surface-low"
+                  />
+                </div>
+              ) : customTaskMode ? (
+                <div className="rounded-xl border border-border bg-surface-lowest p-4">
+                  <div className="mb-4 flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <Plus size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-body text-sm font-semibold text-foreground">Tạo công việc mới</p>
+                      <p className="mt-1 font-body text-xs leading-relaxed text-muted-foreground">
+                        Dùng cho việc phát sinh riêng của dự án, không nằm trong checklist mẫu.
+                      </p>
+                    </div>
+                  </div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Tên công việc mới *</label>
+                  <Input
+                    value={form.title}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    placeholder="VD: Chuẩn bị khu vực livestream phụ..."
+                    className="rounded-xl border-none bg-surface-low"
+                  />
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-surface-lowest p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="font-body text-sm font-semibold text-foreground">Checklist {taskTemplateGroup.label}</p>
+                      <p className="mt-1 font-body text-xs text-muted-foreground">
+                        Còn {missingServiceTaskTemplates.length} việc mẫu chưa có · Đã chọn {selectedTaskTemplates.length}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-lg px-3"
+                        onClick={selectAllMissingTemplates}
+                        disabled={missingServiceTaskTemplates.length === 0}
+                      >
+                        Chọn tất cả
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 rounded-lg px-3"
+                        onClick={clearSelectedTemplates}
+                        disabled={selectedTaskTemplates.length === 0}
+                      >
+                        Bỏ chọn
+                      </Button>
+                      <span className="rounded-full bg-surface-low px-2 py-1 font-body text-[11px] font-semibold text-muted-foreground">
+                        {filteredServiceTaskTemplates.length} kết quả
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="relative mt-3">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={taskTemplateSearch}
+                      onChange={(event) => setTaskTemplateSearch(event.target.value)}
+                      placeholder="Tìm theo tên, giai đoạn hoặc mô tả..."
+                      className="rounded-xl border-none bg-surface-low pl-9"
+                    />
+                  </div>
+
+                  <div className="mt-3 max-h-[220px] space-y-2 overflow-y-auto pr-1 sm:max-h-[260px]">
+                    {filteredServiceTaskTemplates.map((template) => {
+                      const alreadyAdded = usedTaskTitles.has(normalizeTaskTitle(template.title));
+                      const selected = selectedTaskTemplateIds.includes(template.id);
+                      const templateForm = buildTaskFormFromTemplate(template, form.assigneeUserId);
+
+                      return (
+                        <button
+                          key={template.id}
+                          type="button"
+                          disabled={alreadyAdded}
+                          onClick={() => toggleTaskTemplate(template)}
+                          className={`w-full rounded-lg border p-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-55 ${
+                            selected
+                              ? "border-primary bg-primary/10"
+                              : "border-border bg-surface-low hover:border-primary/60 hover:bg-surface-high"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                                  {template.phase}
+                                </span>
+                                <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${priorityColors[template.priority]}`}>
+                                  {priorityLabel[template.priority]}
+                                </span>
+                                <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-muted-foreground">
+                                  {templateForm.dueAt ? formatDate(templateForm.dueAt) : "Chưa có hạn"}
+                                </span>
+                                {alreadyAdded && (
+                                  <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-secondary">
+                                    Đã có
+                                  </span>
+                                )}
+                              </div>
+                              <p className="font-body text-sm font-semibold leading-snug text-foreground">
+                                {template.title}
+                              </p>
+                              <p className="mt-1 font-body text-xs leading-relaxed text-muted-foreground">
+                                {template.description}
+                              </p>
+                            </div>
+                            <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                              selected ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground"
+                            }`}>
+                              {selected ? <CheckCircle size={15} /> : <Plus size={14} />}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+
+                    {filteredServiceTaskTemplates.length === 0 && (
+                      <div className="rounded-lg bg-surface-low p-5 text-center font-body text-sm text-muted-foreground">
+                        Không tìm thấy việc mẫu phù hợp.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            {!editingTask && customTaskMode && (
-              <div>
-                <label className="font-body text-sm text-foreground mb-1 block">Tên công việc tùy chỉnh</label>
-                <Input
-                  value={form.title}
-                  onChange={(event) => setForm({ ...form, title: event.target.value })}
-                  placeholder="Nhập tên công việc phát sinh..."
-                  className="rounded-xl border-none bg-surface-low"
-                />
+            {!editingTask && !customTaskMode && selectedTaskTemplates.length > 1 ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_240px]">
+                <div className="rounded-xl bg-surface-low p-4 font-body text-sm text-muted-foreground">
+                  Đã chọn {selectedTaskTemplates.length} việc mẫu. Hệ thống sẽ dùng mô tả, deadline và mức ưu tiên gợi ý riêng cho từng việc.
+                </div>
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Phụ trách chung</label>
+                  <select
+                    value={form.assigneeUserId}
+                    onChange={(event) => setForm({ ...form, assigneeUserId: event.target.value })}
+                    className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+                  >
+                    <option value="">Chưa phân công</option>
+                    {assigneeOptions.map((person) => (
+                      <option key={person.id} value={person.id}>{person.displayName}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+            ) : (
+              <>
+                <div>
+                  <label className="font-body text-sm text-foreground mb-1 block">Mô tả</label>
+                  <Input
+                    value={form.description}
+                    onChange={(event) => setForm({ ...form, description: event.target.value })}
+                    placeholder="Mô tả ngắn..."
+                    className="rounded-xl border-none bg-surface-low"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="font-body text-sm text-foreground mb-1 block">Deadline</label>
+                    <Input
+                      type="date"
+                      value={form.dueAt}
+                      onChange={(event) => setForm({ ...form, dueAt: event.target.value })}
+                      className="rounded-xl border-none bg-surface-low"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-body text-sm text-foreground mb-1 block">Ưu tiên</label>
+                    <select
+                      value={form.priority}
+                      onChange={(event) => setForm({ ...form, priority: event.target.value as "low" | "medium" | "high" })}
+                      className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+                    >
+                      <option value="high">Cao</option>
+                      <option value="medium">Trung bình</option>
+                      <option value="low">Thấp</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-body text-sm text-foreground mb-1 block">Phụ trách</label>
+                    <select
+                      value={form.assigneeUserId}
+                      onChange={(event) => setForm({ ...form, assigneeUserId: event.target.value })}
+                      className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
+                    >
+                      <option value="">Chưa phân công</option>
+                      {assigneeOptions.map((person) => (
+                        <option key={person.id} value={person.id}>{person.displayName}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </>
             )}
-            <div>
-              <label className="font-body text-sm text-foreground mb-1 block">Mô tả</label>
-              <Input
-                value={form.description}
-                onChange={(event) => setForm({ ...form, description: event.target.value })}
-                placeholder="Mô tả ngắn..."
-                className="rounded-xl border-none bg-surface-low"
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="font-body text-sm text-foreground mb-1 block">Deadline</label>
-                <Input
-                  type="date"
-                  value={form.dueAt}
-                  onChange={(event) => setForm({ ...form, dueAt: event.target.value })}
-                  className="rounded-xl border-none bg-surface-low"
-                />
-              </div>
-              <div>
-                <label className="font-body text-sm text-foreground mb-1 block">Ưu tiên</label>
-                <select
-                  value={form.priority}
-                  onChange={(event) => setForm({ ...form, priority: event.target.value as "low" | "medium" | "high" })}
-                  className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
-                >
-                  <option value="high">Cao</option>
-                  <option value="medium">Trung bình</option>
-                  <option value="low">Thấp</option>
-                </select>
-              </div>
-              <div>
-                <label className="font-body text-sm text-foreground mb-1 block">Phụ trách</label>
-                <select
-                  value={form.assigneeUserId}
-                  onChange={(event) => setForm({ ...form, assigneeUserId: event.target.value })}
-                  className="w-full rounded-xl bg-surface-low p-2.5 font-body text-sm text-foreground border-none"
-                >
-                  <option value="">Chưa phân công</option>
-                  {assigneeOptions.map((person) => (
-                    <option key={person.id} value={person.id}>{person.displayName}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-border bg-background px-5 py-3">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Hủy</Button>
-            <Button variant="hero" onClick={saveTask} disabled={!form.title.trim()}>
-              {editingTask ? "Cập nhật" : "Thêm"}
+            <Button variant="hero" onClick={saveTask} disabled={!canSaveTask}>
+              {saveTaskLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

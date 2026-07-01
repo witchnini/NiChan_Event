@@ -360,6 +360,7 @@ const deleteEventsCascade = async (tx: Prisma.TransactionClient, eventIds: strin
   const contractFilter = contractIds.length ? [{ contractId: { in: contractIds } }] : [];
   await tx.document.deleteMany({ where: { OR: [{ eventId: events }, ...contractFilter] } });
   await tx.transaction.deleteMany({ where: { OR: [{ eventId: events }, ...contractFilter] } });
+  await tx.contractLineItem.deleteMany({ where: { contractVersion: { contractId: { in: contractIds } } } });
   await tx.contractVersion.deleteMany({ where: { contractId: { in: contractIds } } });
 
   // Con trực tiếp của Event

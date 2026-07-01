@@ -13,10 +13,10 @@ import type {
 } from "./admin-projects.schema";
 
 const KANBAN_COLUMNS = [
-  { id: "todo", title: "Cho xu ly" },
-  { id: "in_progress", title: "Dang thuc hien" },
-  { id: "review", title: "Dang kiem tra" },
-  { id: "done", title: "Hoan thanh" },
+  { id: "todo", title: "Chờ xử lý" },
+  { id: "in_progress", title: "Đang thực hiện" },
+  { id: "review", title: "Đang kiểm tra" },
+  { id: "done", title: "Hoàn thành" },
 ] as const;
 
 const SORTABLE_FIELDS = new Set([
