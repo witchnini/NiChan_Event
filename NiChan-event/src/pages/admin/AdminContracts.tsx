@@ -196,6 +196,8 @@ const unitOptions = [
 const AUTO_SERVICE_VALUE = "__auto_service__";
 const SERVICE_CATEGORY_VALUE_PREFIX = "__service_category__:";
 const MANUAL_TEMPLATE_VALUE = "__manual_template__";
+const AUTO_TERMS_TEMPLATE_VALUE = "__auto_terms_template__";
+const MANUAL_TERMS_TEMPLATE_VALUE = "__manual_terms_template__";
 
 type ContractLineItemTemplate = {
   id: string;
@@ -209,6 +211,14 @@ type ContractLineItemTemplateGroup = {
   label: string;
   keywords: string[];
   items: ContractLineItemTemplate[];
+};
+
+type ContractTermsTemplate = {
+  id: string;
+  label: string;
+  scopeText: string;
+  paymentTerms: string;
+  generalTerms: string;
 };
 
 const normalizeText = (value: string) =>
@@ -572,6 +582,256 @@ const contractLineItemTemplateGroups: ContractLineItemTemplateGroup[] = [
   },
 ];
 
+const termsText = (...lines: string[]) => lines.join("\n");
+
+const commonContractTermsTemplate: ContractTermsTemplate = {
+  id: "common",
+  label: "Dịch vụ chung",
+  scopeText: termsText(
+    "1. NiChan tư vấn mục tiêu, quy mô, đối tượng khách mời và xây dựng kế hoạch tổ chức tổng thể cho sự kiện.",
+    "2. NiChan lập timeline triển khai, checklist hạng mục, phương án nhân sự, nhà cung cấp và điều phối các đầu việc đã thống nhất.",
+    "3. NiChan chuẩn bị phương án vận hành tại hiện trường, giám sát setup, điều phối chương trình và hỗ trợ xử lý phát sinh hợp lý trong phạm vi hợp đồng.",
+    "4. Các hạng mục vật tư, nhân sự, địa điểm, thiết bị, truyền thông và dịch vụ bổ sung được thực hiện theo bảng báo giá/hạng mục đính kèm hợp đồng.",
+    "5. Sau chương trình, NiChan phối hợp nghiệm thu, bàn giao tài liệu/hình ảnh/sản phẩm liên quan nếu có trong phạm vi đã báo giá.",
+  ),
+  paymentTerms: termsText(
+    "1. Đợt 1: Khách hàng thanh toán 50% tổng giá trị hợp đồng trong vòng 03 ngày làm việc kể từ ngày ký hợp đồng để NiChan giữ lịch, đặt cọc nhà cung cấp và bắt đầu triển khai.",
+    "2. Đợt 2: Khách hàng thanh toán 30% tổng giá trị hợp đồng chậm nhất 07 ngày trước ngày tổ chức sự kiện hoặc trước thời điểm bắt đầu setup theo timeline được duyệt.",
+    "3. Đợt 3: Khách hàng thanh toán 20% còn lại trong vòng 03 ngày làm việc sau khi hai bên nghiệm thu hoàn thành chương trình.",
+    "4. Chi phí phát sinh ngoài phạm vi đã duyệt phải được hai bên xác nhận bằng văn bản/tin nhắn/email và thanh toán theo tiến độ phát sinh thực tế.",
+    "5. Các khoản thanh toán được thực hiện bằng chuyển khoản hoặc phương thức khác do hai bên thống nhất; phí ngân hàng, thuế và chi phí giao dịch phát sinh do bên thanh toán chịu, trừ khi có thỏa thuận khác.",
+  ),
+  generalTerms: termsText(
+    "1. Hai bên cam kết phối hợp cung cấp thông tin, phê duyệt nội dung, thiết kế, timeline và danh sách khách mời đúng thời hạn để bảo đảm tiến độ tổ chức.",
+    "2. Mọi thay đổi về quy mô, thời gian, địa điểm, kịch bản, số lượng khách hoặc hạng mục dịch vụ cần được thông báo sớm và có thể làm thay đổi chi phí, tiến độ hoặc phương án vận hành.",
+    "3. NiChan không chịu trách nhiệm đối với các chậm trễ hoặc thiệt hại phát sinh từ nguyên nhân bất khả kháng như thiên tai, dịch bệnh, yêu cầu từ cơ quan nhà nước, mất điện diện rộng, sự cố an ninh hoặc các yếu tố ngoài kiểm soát hợp lý.",
+    "4. Tài sản, thiết bị, đạo cụ thuê/mượn phải được sử dụng đúng mục đích. Trường hợp hư hỏng, mất mát do lỗi của khách hàng hoặc khách mời, chi phí bồi hoàn được tính theo giá trị thực tế.",
+    "5. Thông tin, hình ảnh, dữ liệu và tài liệu nội bộ của hai bên được bảo mật, trừ trường hợp sử dụng cho mục đích truyền thông đã được bên còn lại đồng ý.",
+  ),
+};
+
+const contractTermsTemplates: ContractTermsTemplate[] = [
+  {
+    id: "wedding",
+    label: "Tiệc cưới",
+    scopeText: termsText(
+      "1. NiChan tư vấn concept cưới, màu sắc chủ đạo, phong cách trang trí, timeline lễ/tiệc và phương án điều phối phù hợp với hai gia đình.",
+      "2. NiChan triển khai các hạng mục trong bảng báo giá như cổng hoa, backdrop, sân khấu, bàn gallery, lối đi, âm thanh ánh sáng, MC, chụp ảnh/quay phim, catering và nhân sự phục vụ.",
+      "3. NiChan phối hợp với cô dâu chú rể, đại diện gia đình, địa điểm tổ chức và các nhà cung cấp để chốt layout, thời gian setup, chạy chương trình và tháo dỡ sau tiệc.",
+      "4. Số lượng khách, bàn tiệc, thực đơn, nghi thức lễ và các tiết mục đặc biệt được thực hiện theo thông tin đã duyệt trước ngày tổ chức.",
+      "5. Các hạng mục phát sinh như tăng số bàn, nâng cấp hoa tươi, bổ sung màn LED, tiết mục biểu diễn hoặc thay đổi layout sẽ được báo giá và xác nhận riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng trong vòng 03 ngày làm việc sau khi ký để giữ lịch, đặt cọc địa điểm/nhà cung cấp và bắt đầu thiết kế concept.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 10 ngày trước ngày cưới để hoàn tất đặt hàng vật tư, nhân sự, thiết bị và các hạng mục sản xuất.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau tiệc cưới, sau khi hai bên đối soát hạng mục hoàn thành và chi phí phát sinh nếu có.",
+      "4. Các phát sinh do thay đổi số lượng khách, bàn tiệc, thực đơn hoặc nâng cấp trang trí sau thời điểm chốt phương án sẽ được thanh toán trước khi triển khai.",
+    ),
+    generalTerms: termsText(
+      "1. Phương án trang trí, layout bàn tiệc, kịch bản, danh sách nghi thức và timeline cần được khách hàng phê duyệt trước ngày cưới tối thiểu 07 ngày.",
+      "2. Thay đổi số lượng khách/bàn tiệc cần thông báo theo thời hạn của địa điểm hoặc nhà cung cấp catering; thay đổi muộn có thể phát sinh chi phí.",
+      "3. Hoa tươi, vật liệu trang trí và màu sắc thực tế có thể chênh lệch nhẹ do mùa vụ, nguồn cung và điều kiện ánh sáng tại địa điểm.",
+      "4. Khách hàng chịu trách nhiệm xin phép địa điểm đối với các hạng mục đặc biệt như pháo kim tuyến, khói lạnh, confetti, nến, vật treo hoặc setup ngoài quy định.",
+      "5. NiChan được quyền điều chỉnh phương án vận hành tại hiện trường nếu cần để bảo đảm an toàn, tiến độ và trải nghiệm khách mời.",
+    ),
+  },
+  {
+    id: "birthday",
+    label: "Sinh nhật",
+    scopeText: termsText(
+      "1. NiChan tư vấn chủ đề sinh nhật, phong cách trang trí, màu sắc, khu vực check-in, bàn gallery và các hoạt động phù hợp với nhân vật chính.",
+      "2. NiChan triển khai backdrop, trang trí không gian, bánh/tea break, MC hoặc hoạt náo, âm thanh cơ bản, chụp ảnh và điều phối chương trình theo bảng báo giá.",
+      "3. NiChan chuẩn bị timeline đón khách, khai tiệc, thổi nến, trò chơi/giao lưu, chụp ảnh lưu niệm và hỗ trợ gia đình trong quá trình tổ chức.",
+      "4. Các yêu cầu cá nhân hóa như tên, tuổi, hình ảnh, mascot, quà tặng hoặc tiết mục bất ngờ được thực hiện theo nội dung khách hàng cung cấp và duyệt trước.",
+      "5. Hạng mục phát sinh về số lượng khách, đồ ăn, quà tặng, trang trí bổ sung hoặc kéo dài thời lượng sẽ được xác nhận và báo giá riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để NiChan giữ lịch, thiết kế chủ đề và đặt các hạng mục trang trí/catering.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 05 ngày trước sự kiện để hoàn tất sản xuất vật phẩm cá nhân hóa, chuẩn bị nhân sự và đặt hàng dịch vụ.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 02 ngày sau sự kiện sau khi nghiệm thu các hạng mục đã thực hiện.",
+      "4. Các hạng mục cá nhân hóa hoặc đặt mua riêng theo yêu cầu có thể cần thanh toán trước 100% tại thời điểm xác nhận.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng cung cấp tên, tuổi, hình ảnh, danh sách khách, yêu cầu màu sắc/chủ đề và nội dung cá nhân hóa trước ngày tổ chức tối thiểu 05 ngày.",
+      "2. Các vật phẩm in ấn, bánh, quà tặng hoặc đạo cụ cá nhân hóa sau khi đã sản xuất không thể hủy hoặc thay đổi miễn phí.",
+      "3. Trường hợp sự kiện tổ chức tại nhà riêng/căn hộ/nhà hàng, khách hàng hỗ trợ quyền ra vào, khu vực setup, thang máy, điện nước và quy định của địa điểm.",
+      "4. NiChan không chịu trách nhiệm với các sự cố do khách mời tự ý di chuyển, tháo lắp hoặc sử dụng sai mục đích đồ trang trí/thiết bị.",
+      "5. Thời gian setup và tháo dỡ được thực hiện theo khung giờ địa điểm cho phép; phát sinh ngoài khung giờ có thể tính thêm chi phí nhân sự.",
+    ),
+  },
+  {
+    id: "anniversary",
+    label: "Kỷ niệm",
+    scopeText: termsText(
+      "1. NiChan tư vấn chủ đề kỷ niệm, thông điệp chương trình, timeline nghi thức, phát biểu, vinh danh và các điểm nhấn cảm xúc.",
+      "2. NiChan triển khai sân khấu, backdrop, khu vực check-in, âm thanh ánh sáng, trình chiếu hình ảnh/video, MC, tiết mục biểu diễn và nhân sự điều phối theo báo giá.",
+      "3. NiChan phối hợp chuẩn bị nội dung vinh danh, kịch bản trao quà/tri ân, thứ tự đại biểu, cue âm thanh ánh sáng và luồng di chuyển trên sân khấu.",
+      "4. Tư liệu hình ảnh, logo, danh sách khách mời, bài phát biểu và nội dung trình chiếu do khách hàng cung cấp và chịu trách nhiệm về tính chính xác.",
+      "5. Các hạng mục truyền thông, quay phim, chụp ảnh, dựng highlight hoặc quà lưu niệm được bàn giao theo phạm vi đã thống nhất.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để bắt đầu xây dựng kịch bản, thiết kế nhận diện và đặt lịch nhà cung cấp.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 07 ngày trước chương trình để hoàn tất sản xuất backdrop, tư liệu trình chiếu, thiết bị và nhân sự.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau khi nghiệm thu chương trình và bàn giao các sản phẩm hậu kỳ nếu có.",
+      "4. Hạng mục quà tặng, cúp vinh danh, in ấn hoặc sản xuất vật phẩm theo yêu cầu có thể cần đặt cọc/thanh toán trước theo báo giá nhà cung cấp.",
+    ),
+    generalTerms: termsText(
+      "1. Nội dung phát biểu, danh sách vinh danh, logo, hình ảnh, video và thông tin doanh nghiệp cần được khách hàng phê duyệt cuối trước chương trình tối thiểu 05 ngày.",
+      "2. Mọi thay đổi về thứ tự nghi thức, danh sách vinh danh hoặc đại biểu sau khi đã chốt kịch bản có thể ảnh hưởng đến timeline và chi phí vận hành.",
+      "3. Khách hàng chịu trách nhiệm bản quyền đối với hình ảnh, âm nhạc, video hoặc nội dung nội bộ cung cấp cho chương trình.",
+      "4. NiChan được quyền điều chỉnh kỹ thuật trình chiếu/âm thanh ánh sáng tại hiện trường để phù hợp điều kiện thực tế và an toàn vận hành.",
+      "5. Các sản phẩm hậu kỳ được chỉnh sửa theo số vòng góp ý đã thống nhất; yêu cầu chỉnh sửa vượt phạm vi có thể phát sinh chi phí.",
+    ),
+  },
+  {
+    id: "conference",
+    label: "Hội nghị & hội thảo",
+    scopeText: termsText(
+      "1. NiChan tư vấn mô hình hội nghị/hội thảo, layout phòng, sơ đồ chỗ ngồi, luồng check-in, timeline nội dung và phương án kỹ thuật.",
+      "2. NiChan triển khai địa điểm/setup phòng, thiết bị trình chiếu, âm thanh, micro, lễ tân, tài liệu, bảng tên, tea break, livestream/ghi hình và nhân sự vận hành theo báo giá.",
+      "3. NiChan phối hợp với diễn giả, đại diện khách hàng, địa điểm và đội kỹ thuật để kiểm tra file trình chiếu, rehearsal, cue chương trình và hỗ trợ khách tham dự.",
+      "4. Danh sách khách, nội dung tài liệu, slide, kịch bản phát biểu và yêu cầu bảo mật thông tin do khách hàng cung cấp đúng hạn.",
+      "5. Các thay đổi về số lượng khách, thiết bị, thời lượng phiên họp, phiên song song hoặc yêu cầu hybrid/online sẽ được xác nhận và báo giá bổ sung nếu phát sinh.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để giữ địa điểm, đặt thiết bị, nhân sự và bắt đầu chuẩn bị tài liệu.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 07 ngày trước sự kiện để hoàn tất chi phí địa điểm, tea break/catering và kỹ thuật.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau khi nghiệm thu chương trình, đối soát số lượng khách thực tế và các phát sinh nếu có.",
+      "4. Chi phí địa điểm, dịch thuật, phiên dịch, thiết bị chuyên dụng hoặc nền tảng trực tuyến có thể áp dụng điều kiện thanh toán riêng theo nhà cung cấp.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng cung cấp nội dung chương trình, danh sách khách, tài liệu, slide, yêu cầu bảo mật và thông tin diễn giả trước sự kiện tối thiểu 05 ngày.",
+      "2. File trình chiếu, video, âm thanh và thiết bị cá nhân của diễn giả cần được kiểm tra kỹ thuật trước chương trình theo lịch rehearsal.",
+      "3. Số lượng khách thực tế vượt số lượng đã chốt có thể phát sinh chi phí tea break, ghế ngồi, tài liệu, nhân sự và thiết bị bổ sung.",
+      "4. Đối với hội nghị/hội thảo trực tuyến hoặc hybrid, chất lượng truyền dẫn phụ thuộc vào đường truyền internet, nền tảng sử dụng và thiết bị đầu cuối của người tham dự.",
+      "5. Nội dung chuyên môn, phát ngôn của diễn giả và tài liệu do khách hàng cung cấp thuộc trách nhiệm của khách hàng.",
+    ),
+  },
+  {
+    id: "groundbreaking",
+    label: "Động thổ & khởi công",
+    scopeText: termsText(
+      "1. NiChan khảo sát mặt bằng, tư vấn layout khu nghi lễ, khu đại biểu, khu đón khách, lối di chuyển, vị trí sân khấu, nhà bạt và khu vực động thổ/khởi công.",
+      "2. NiChan triển khai nhà bạt, sân khấu, backdrop, thảm, bàn ghế, âm thanh ngoài trời, bộ nghi thức, lễ tân, điều phối đại biểu và nhân sự kỹ thuật theo báo giá.",
+      "3. NiChan xây dựng timeline nghi lễ, cue phát biểu, nghi thức xúc cát/cắt băng/khởi công và phương án điều phối khách mời tại công trường.",
+      "4. Khách hàng cung cấp giấy phép, quyền sử dụng mặt bằng, nguồn điện/nước, phương án an ninh, an toàn lao động và danh sách đại biểu đúng thời hạn.",
+      "5. Các hạng mục phát sinh do điều kiện mặt bằng, thời tiết, yêu cầu an toàn, thay đổi quy mô hoặc bổ sung thiết bị sẽ được xác nhận và báo giá riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 60% giá trị hợp đồng sau khi ký để đặt nhà bạt, thiết bị, vật tư nghi lễ và nhân sự thi công.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 05 ngày trước ngày tổ chức hoặc trước thời điểm bắt đầu thi công setup tại mặt bằng.",
+      "3. Đợt 3: Thanh toán 10% còn lại trong vòng 03 ngày sau khi hoàn tất tháo dỡ, nghiệm thu và đối soát phát sinh nếu có.",
+      "4. Các chi phí xin phép, bảo vệ, điện công suất lớn, xe nâng/cẩu, gia cố mặt bằng hoặc thiết bị an toàn đặc biệt do khách hàng thanh toán hoặc được báo giá riêng.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng chịu trách nhiệm bảo đảm pháp lý, quyền sử dụng mặt bằng, an toàn công trường và các giấy phép cần thiết cho việc tổ chức.",
+      "2. NiChan có quyền điều chỉnh setup hoặc tạm dừng thi công nếu điều kiện mặt bằng, thời tiết, nguồn điện hoặc an toàn lao động không bảo đảm.",
+      "3. Các hạng mục ngoài trời có thể chịu ảnh hưởng bởi mưa, gió, nền đất, bụi công trường hoặc điều kiện thi công; hai bên thống nhất phương án dự phòng trước sự kiện.",
+      "4. Thiết bị, nhà bạt, sân khấu và vật tư phải được bảo vệ trong thời gian lưu tại công trường; mất mát/hư hỏng do bên thứ ba hoặc khách hàng quản lý sẽ được bồi hoàn theo thực tế.",
+      "5. Thay đổi vị trí setup, thời gian thi công hoặc quy mô sau khi đã khảo sát có thể phát sinh chi phí nhân sự, vận chuyển và vật tư.",
+    ),
+  },
+  {
+    id: "opening",
+    label: "Khai trương",
+    scopeText: termsText(
+      "1. NiChan tư vấn concept khai trương, layout cổng chào/backdrop/check-in, timeline nghi thức, hoạt động thu hút khách và điểm nhấn thương hiệu.",
+      "2. NiChan triển khai cổng chào, backdrop, standee, âm thanh ánh sáng, nghi thức cắt băng, múa lân/tiết mục chào mừng, lễ tân, chụp ảnh/quay phim và điều phối chương trình theo báo giá.",
+      "3. NiChan phối hợp với địa điểm, đội vận hành cửa hàng/showroom và đại diện khách hàng để bảo đảm setup không ảnh hưởng hoạt động kinh doanh.",
+      "4. Nội dung thương hiệu, logo, thông điệp, danh sách đại biểu, quà tặng và ưu đãi khai trương do khách hàng cung cấp và phê duyệt trước.",
+      "5. Hạng mục phát sinh như roadshow, KOL/KOC, truyền thông, livestream, sampling, quà tặng hoặc kéo dài thời lượng sẽ được xác nhận và báo giá bổ sung.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để giữ lịch, thiết kế nhận diện và đặt các hạng mục sản xuất/biểu diễn.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 05 ngày trước ngày khai trương để hoàn tất vật tư, nhân sự, thiết bị và tiết mục.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau chương trình sau khi nghiệm thu và đối soát phát sinh.",
+      "4. Các hạng mục truyền thông, KOL/KOC, booking nghệ sĩ hoặc vật phẩm quà tặng có thể cần thanh toán trước theo điều kiện của nhà cung cấp.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng cung cấp logo, guideline thương hiệu, thông điệp, danh sách khách mời và yêu cầu địa điểm trước ngày tổ chức tối thiểu 05 ngày.",
+      "2. Khách hàng chịu trách nhiệm xin phép địa điểm/chính quyền nếu có hoạt động ngoài trời, âm thanh lớn, múa lân, roadshow hoặc chiếm dụng không gian công cộng.",
+      "3. Thời gian setup/tháo dỡ phải phù hợp với quy định tòa nhà, trung tâm thương mại, showroom hoặc cửa hàng; phát sinh ngoài khung giờ có thể tính thêm chi phí.",
+      "4. Các hoạt động khuyến mãi, sampling, quà tặng và thông tin thương mại do khách hàng chịu trách nhiệm pháp lý.",
+      "5. NiChan có quyền điều chỉnh cue chương trình tại hiện trường để bảo đảm an toàn, hình ảnh thương hiệu và trải nghiệm khách mời.",
+    ),
+  },
+  {
+    id: "inauguration",
+    label: "Khánh thành",
+    scopeText: termsText(
+      "1. NiChan tư vấn kịch bản khánh thành, nghi thức cắt băng/mở bảng, layout sân khấu, khu đại biểu, khu đón khách và luồng tham quan công trình.",
+      "2. NiChan triển khai sân khấu, backdrop, thảm đỏ, âm thanh ánh sáng, bộ nghi thức, lễ tân, quà lưu niệm, chụp ảnh/quay phim và nhân sự điều phối theo báo giá.",
+      "3. NiChan phối hợp chuẩn bị thứ tự đại biểu, cue phát biểu, nghi thức, hướng dẫn khách mời và phương án vận hành tại khu vực công trình.",
+      "4. Khách hàng cung cấp thông tin công trình, danh sách đại biểu, logo, bài phát biểu, giấy phép và quy định an toàn của địa điểm.",
+      "5. Các hạng mục phát sinh như tham quan công trình, tiệc nhẹ, truyền thông báo chí, bảo vệ, xe điện/xe đưa đón hoặc thiết bị đặc biệt được xác nhận riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để giữ lịch, thiết kế nhận diện và đặt các hạng mục nghi thức/thiết bị.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 07 ngày trước ngày khánh thành để hoàn tất sản xuất, vận chuyển, nhân sự và thiết bị.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau khi nghiệm thu chương trình và bàn giao sản phẩm hậu kỳ nếu có.",
+      "4. Chi phí phát sinh về an ninh, giấy phép, thiết bị ngoài trời, gia cố mặt bằng hoặc truyền thông báo chí được thanh toán theo báo giá bổ sung.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng chịu trách nhiệm bảo đảm địa điểm đủ điều kiện tổ chức, an toàn cho khách mời và có các giấy phép cần thiết.",
+      "2. Danh sách đại biểu, nghi thức, bài phát biểu, nội dung bảng tên/cắt băng và logo cần được phê duyệt cuối trước chương trình tối thiểu 05 ngày.",
+      "3. NiChan có quyền điều chỉnh layout hoặc timeline nếu điều kiện công trình, thời tiết, an ninh hoặc yêu cầu kỹ thuật thay đổi.",
+      "4. Khách hàng chịu trách nhiệm với nội dung công bố, thông tin công trình, tài liệu truyền thông và phát ngôn của đại diện khách mời.",
+      "5. Thiết bị/vật tư lưu tại công trình cần được bảo vệ; mất mát/hư hỏng ngoài phạm vi kiểm soát của NiChan sẽ được bồi hoàn theo giá trị thực tế.",
+    ),
+  },
+  {
+    id: "gala",
+    label: "Gala Dinner",
+    scopeText: termsText(
+      "1. NiChan tư vấn concept Gala Dinner, kịch bản tổng thể, nghi thức khai tiệc, phần vinh danh/tri ân, tiết mục biểu diễn và hoạt động tương tác khách mời.",
+      "2. NiChan triển khai sân khấu, backdrop/photobooth, LED, âm thanh ánh sáng, MC, nghệ sĩ/tiết mục, banquet, lễ tân, chụp ảnh/quay phim và điều phối chương trình theo báo giá.",
+      "3. NiChan phối hợp với khách hàng để chuẩn bị danh sách khách VIP, kịch bản trao giải, slide vinh danh, âm nhạc, video, quà tặng và timeline phục vụ tiệc.",
+      "4. Nội dung thương hiệu, danh sách vinh danh, hình ảnh, video, thông điệp tri ân và quà tặng do khách hàng cung cấp, NiChan hỗ trợ sắp xếp vào flow chương trình.",
+      "5. Các hạng mục phát sinh như nâng cấp nghệ sĩ, mở rộng sân khấu, tăng số khách, bổ sung tiệc/đồ uống, livestream hoặc truyền thông được xác nhận và báo giá riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để giữ lịch, booking địa điểm/nhà cung cấp/nghệ sĩ và bắt đầu thiết kế concept.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 10 ngày trước chương trình để hoàn tất chi phí sản xuất sân khấu, thiết bị, nhân sự, banquet và biểu diễn.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau chương trình sau khi nghiệm thu, đối soát số lượng khách và phát sinh nếu có.",
+      "4. Booking nghệ sĩ, MC, địa điểm, banquet hoặc vật phẩm sản xuất riêng có thể áp dụng điều kiện đặt cọc/thanh toán riêng theo nhà cung cấp.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng cung cấp danh sách khách, danh sách vinh danh, logo, guideline thương hiệu, nội dung trình chiếu và yêu cầu nghi thức trước chương trình tối thiểu 07 ngày.",
+      "2. Số lượng khách chốt là cơ sở để đặt banquet, bàn ghế, nhân sự phục vụ và quà tặng; thay đổi muộn có thể phát sinh chi phí hoặc không bảo đảm đủ dịch vụ.",
+      "3. Lịch rehearsal, soundcheck và setup phụ thuộc vào quy định của địa điểm; phát sinh ngoài khung giờ được phép có thể tính thêm chi phí.",
+      "4. Nội dung biểu diễn, âm nhạc, hình ảnh, video và phát ngôn trên sân khấu cần phù hợp quy định pháp luật, quy định địa điểm và định hướng thương hiệu của khách hàng.",
+      "5. NiChan được quyền điều chỉnh cue vận hành tại hiện trường để bảo đảm timing tiệc, an toàn kỹ thuật và trải nghiệm khách mời.",
+    ),
+  },
+  {
+    id: "year-end-party",
+    label: "Year End Party",
+    scopeText: termsText(
+      "1. NiChan tư vấn concept Year End Party, thông điệp tổng kết năm, timeline vinh danh, game sân khấu, tiết mục biểu diễn và hoạt động gắn kết nội bộ.",
+      "2. NiChan triển khai sân khấu, backdrop/photobooth, âm thanh ánh sáng/LED, MC, nghệ sĩ, game, banquet, lễ tân, chụp ảnh/quay phim và điều phối chương trình theo báo giá.",
+      "3. NiChan phối hợp chuẩn bị danh sách vinh danh, kịch bản bốc thăm/trao giải, slide tổng kết, video nội bộ, quà tặng và cue sân khấu.",
+      "4. Khách hàng cung cấp dữ liệu nhân sự, nội dung tổng kết, danh sách khách, cơ cấu giải thưởng, hình ảnh/video nội bộ và guideline thương hiệu đúng hạn.",
+      "5. Các hạng mục phát sinh như tăng số khách, nâng cấp tiệc, thêm tiết mục, bổ sung giải thưởng/quà tặng, livestream hoặc kéo dài thời lượng sẽ được báo giá riêng.",
+    ),
+    paymentTerms: termsText(
+      "1. Đợt 1: Thanh toán 50% giá trị hợp đồng sau khi ký để giữ lịch cao điểm cuối năm, booking địa điểm/nhà cung cấp và bắt đầu thiết kế concept.",
+      "2. Đợt 2: Thanh toán 30% chậm nhất 10 ngày trước chương trình để hoàn tất sản xuất, thiết bị, banquet, nhân sự và tiết mục.",
+      "3. Đợt 3: Thanh toán 20% còn lại trong vòng 03 ngày sau chương trình sau khi nghiệm thu và đối soát phát sinh.",
+      "4. Vì mùa cao điểm cuối năm, các booking địa điểm, nghệ sĩ, MC, thiết bị hoặc quà tặng có thể cần đặt cọc/thanh toán trước theo điều kiện nhà cung cấp.",
+    ),
+    generalTerms: termsText(
+      "1. Khách hàng cung cấp danh sách nhân sự/khách mời, danh sách vinh danh, cơ cấu giải thưởng, nội dung tổng kết và tư liệu trình chiếu trước chương trình tối thiểu 07 ngày.",
+      "2. Số lượng khách chốt là cơ sở để đặt tiệc, bàn ghế, quà tặng và nhân sự; thay đổi sau hạn chốt có thể phát sinh chi phí hoặc không bảo đảm đủ số lượng.",
+      "3. Nội dung game, bốc thăm, trao giải và truyền thông nội bộ do khách hàng phê duyệt; NiChan hỗ trợ điều phối và bảo mật thông tin theo phạm vi hợp đồng.",
+      "4. Lịch setup/rehearsal phụ thuộc vào địa điểm và mùa cao điểm; khách hàng phối hợp phê duyệt kịp thời để tránh ảnh hưởng tiến độ.",
+      "5. NiChan có quyền điều chỉnh timeline vận hành tại hiện trường để cân bằng phần tiệc, vinh danh, biểu diễn và hoạt động nội bộ.",
+    ),
+  },
+];
+
+const getContractTermsTemplateByGroupId = (groupId?: string) =>
+  contractTermsTemplates.find((template) => template.id === groupId) ?? commonContractTermsTemplate;
+
 const mergeLineItemTemplates = (templates: ContractLineItemTemplate[]) => {
   const seen = new Set<string>();
   return templates.filter((template) => {
@@ -595,6 +855,9 @@ const getBestTemplateGroup = (contextText: string) =>
     .map((group) => ({ group, score: scoreTemplateGroup(contextText, group) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score)[0]?.group;
+
+const getContractTermsTemplate = (contextText: string) =>
+  getContractTermsTemplateByGroupId(getBestTemplateGroup(contextText)?.id);
 
 const getSuggestedLineItemTemplates = (contextText: string) => {
   const normalizedContext = normalizeText(contextText);
@@ -746,6 +1009,7 @@ const AdminContracts = () => {
   const [serviceCatalog, setServiceCatalog] = useState<ServiceCatalogItem[]>([]);
   const [serviceCategories, setServiceCategories] = useState<ServiceCategoryItem[]>([]);
   const [selectedServiceId, setSelectedServiceId] = useState(AUTO_SERVICE_VALUE);
+  const [termsTemplateId, setTermsTemplateId] = useState(AUTO_TERMS_TEMPLATE_VALUE);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -846,6 +1110,19 @@ const AdminContracts = () => {
     selectedServiceId === AUTO_SERVICE_VALUE
       ? autoServiceLabel
       : selectedServiceCategory?.name ?? selectedService?.title ?? "Chọn dịch vụ";
+  const selectedTermsTemplate = useMemo(() => {
+    if (termsTemplateId === MANUAL_TERMS_TEMPLATE_VALUE) return null;
+    if (termsTemplateId === AUTO_TERMS_TEMPLATE_VALUE) {
+      return getContractTermsTemplate(lineItemContextText);
+    }
+    return getContractTermsTemplateByGroupId(termsTemplateId);
+  }, [lineItemContextText, termsTemplateId]);
+  const selectedTermsTemplateLabel =
+    termsTemplateId === MANUAL_TERMS_TEMPLATE_VALUE
+      ? "Nhập tay"
+      : termsTemplateId === AUTO_TERMS_TEMPLATE_VALUE
+        ? `Tự động - ${selectedTermsTemplate?.label ?? lineItemContextLabel}`
+        : selectedTermsTemplate?.label ?? "Chọn mẫu";
 
   const loadContracts = async () => {
     setLoading(true);
@@ -919,6 +1196,7 @@ const AdminContracts = () => {
     setForm(emptyForm());
     setBudgetItems([]);
     setSelectedServiceId(AUTO_SERVICE_VALUE);
+    setTermsTemplateId(AUTO_TERMS_TEMPLATE_VALUE);
     setCreateOpen(true);
     void loadProjects();
     void loadServices();
@@ -932,6 +1210,7 @@ const AdminContracts = () => {
       customerUserId: project?.customerUser?.id ?? "",
     }));
     setSelectedServiceId(AUTO_SERVICE_VALUE);
+    setTermsTemplateId(AUTO_TERMS_TEMPLATE_VALUE);
     void loadServices();
     void loadBudgetItems(eventId);
   };
@@ -1034,8 +1313,8 @@ const AdminContracts = () => {
   };
 
   const applySuggestedLineItems = () => {
-    const templates = suggestedLineItemTemplates.length > 0
-      ? suggestedLineItemTemplates
+    const templates = lineItemTemplateOptions.length > 0
+      ? lineItemTemplateOptions
       : commonLineItemTemplates;
 
     setForm((current) => ({
@@ -1046,6 +1325,21 @@ const AdminContracts = () => {
       ),
     }));
     toast.success(`Đã thêm ${templates.length} hạng mục cho ${lineItemContextLabel}`);
+  };
+
+  const applyTermsTemplate = () => {
+    if (!selectedTermsTemplate) {
+      toast.error("Vui lòng chọn một mẫu điều khoản hoặc nhập tay bên dưới");
+      return;
+    }
+
+    setForm((current) => ({
+      ...current,
+      scopeText: selectedTermsTemplate.scopeText,
+      paymentTerms: selectedTermsTemplate.paymentTerms,
+      generalTerms: selectedTermsTemplate.generalTerms,
+    }));
+    toast.success(`Đã áp dụng điều khoản mẫu ${selectedTermsTemplate.label}`);
   };
 
   const normalizedLineItems = () =>
@@ -1141,6 +1435,7 @@ const AdminContracts = () => {
       });
       setEditItem(detail);
       setSelectedServiceId(AUTO_SERVICE_VALUE);
+      setTermsTemplateId(AUTO_TERMS_TEMPLATE_VALUE);
       void loadServices();
       void loadBudgetItems(detail.event?.id ?? "");
     } catch (error) {
@@ -1253,16 +1548,16 @@ const AdminContracts = () => {
         <p className="font-body text-xs text-muted-foreground">
           {servicesLoading
             ? "Đang tải dịch vụ..."
-            : `${suggestedLineItemTemplates.length} hạng mục gợi ý · ${budgetItems.length > 0 ? `${budgetItems.length} hạng mục ngân sách` : "chưa có ngân sách"}`}
+            : `${lineItemTemplateOptions.length} hạng mục mẫu · ${budgetItems.length > 0 ? `${budgetItems.length} hạng mục ngân sách` : "chưa có ngân sách"}`}
         </p>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="min-w-[980px] w-full border-collapse text-sm">
+        <table className="min-w-[1160px] w-full border-collapse text-sm">
           <thead className="bg-surface-low">
             <tr>
-              <th className="w-72 px-3 py-2 text-left font-body font-semibold">Hạng mục</th>
-              <th className="px-3 py-2 text-left font-body font-semibold">Mô tả</th>
+              <th className="w-80 px-3 py-2 text-left font-body font-semibold">Hạng mục</th>
+              <th className="w-[420px] px-3 py-2 text-left font-body font-semibold">Mô tả</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">SL</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">Đơn vị</th>
               <th className="w-36 px-3 py-2 text-left font-body font-semibold">Đơn giá bán</th>
@@ -1303,11 +1598,12 @@ const AdminContracts = () => {
                   </div>
                 </td>
                 <td className="px-3 py-2 align-top">
-                  <Input
+                  <Textarea
                     value={item.description}
                     onChange={(event) => updateLineItem(index, { description: event.target.value })}
                     placeholder="Mô tả gửi khách"
-                    className="h-9 rounded-lg border-none bg-surface-lowest font-body"
+                    rows={3}
+                    className="min-h-[78px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed text-foreground"
                   />
                 </td>
                 <td className="px-3 py-2 align-top">
@@ -1413,13 +1709,47 @@ const AdminContracts = () => {
         {renderLineItemEditor()}
       </div>
 
+      <div className="rounded-lg border border-border bg-surface-low p-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end">
+          <div className="flex-1">
+            <label className="mb-1 block font-body text-sm text-foreground">Mẫu phạm vi & điều khoản</label>
+            <Select value={termsTemplateId} onValueChange={setTermsTemplateId}>
+              <SelectTrigger className="rounded-lg border-none bg-surface-lowest font-body">
+                <span className="truncate">{selectedTermsTemplateLabel}</span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={AUTO_TERMS_TEMPLATE_VALUE}>
+                  Tự động theo dịch vụ gợi ý - {selectedTermsTemplate?.label ?? lineItemContextLabel}
+                </SelectItem>
+                <SelectItem value={MANUAL_TERMS_TEMPLATE_VALUE}>Nhập tay</SelectItem>
+                <SelectItem value={commonContractTermsTemplate.id}>{commonContractTermsTemplate.label}</SelectItem>
+                {contractTermsTemplates.map((template) => (
+                  <SelectItem key={template.id} value={template.id}>
+                    {template.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={applyTermsTemplate}
+            disabled={!selectedTermsTemplate}
+            className="rounded-lg"
+          >
+            <ClipboardList size={16} /> Áp dụng điều khoản mẫu
+          </Button>
+        </div>
+      </div>
+
       <div>
         <label className="mb-1 block font-body text-sm text-foreground">Phạm vi công việc *</label>
         <Textarea
           value={form.scopeText}
           onChange={(event) => setForm((current) => ({ ...current, scopeText: event.target.value }))}
-          rows={3}
-          className="rounded-lg border-none bg-surface-lowest font-body"
+          rows={7}
+          className="min-h-[170px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed"
         />
       </div>
       <div>
@@ -1427,8 +1757,8 @@ const AdminContracts = () => {
         <Textarea
           value={form.paymentTerms}
           onChange={(event) => setForm((current) => ({ ...current, paymentTerms: event.target.value }))}
-          rows={3}
-          className="rounded-lg border-none bg-surface-lowest font-body"
+          rows={6}
+          className="min-h-[150px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed"
         />
       </div>
       <div>
@@ -1436,8 +1766,8 @@ const AdminContracts = () => {
         <Textarea
           value={form.generalTerms}
           onChange={(event) => setForm((current) => ({ ...current, generalTerms: event.target.value }))}
-          rows={3}
-          className="rounded-lg border-none bg-surface-lowest font-body"
+          rows={7}
+          className="min-h-[170px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed"
         />
       </div>
       {mode === "edit" && (
@@ -1598,12 +1928,12 @@ const AdminContracts = () => {
       </motion.div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
           <DialogHeader>
             <DialogTitle className="font-serif">Tạo hợp đồng mới</DialogTitle>
           </DialogHeader>
           {renderContractForm("create")}
-          <DialogFooter>
+          <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background/95 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Hủy</Button>
             <Button variant="hero" onClick={handleCreate} disabled={saving}>
               {saving ? "Đang lưu..." : "Tạo"}
@@ -1613,12 +1943,12 @@ const AdminContracts = () => {
       </Dialog>
 
       <Dialog open={!!editItem} onOpenChange={() => setEditItem(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
           <DialogHeader>
             <DialogTitle className="font-serif">Chỉnh sửa hợp đồng {editItem?.contractCode}</DialogTitle>
           </DialogHeader>
           {renderContractForm("edit")}
-          <DialogFooter>
+          <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background/95 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <Button variant="outline" onClick={() => setEditItem(null)}>Hủy</Button>
             <Button variant="hero" onClick={handleEdit} disabled={saving}>
               {saving ? "Đang lưu..." : "Lưu"}
