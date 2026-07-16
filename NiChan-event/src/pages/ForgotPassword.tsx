@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowLeft, Mail, CheckCircle2, Send } from "lucide-react";
 import heroImg from "@/assets/hero-wedding.jpg";
+import { apiClient, ApiException } from "@/services/apiClient";
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState("");
@@ -20,10 +21,15 @@ const ForgotPassword = () => {
       return;
     }
     setIsLoading(true);
-    // Simulate request
-    await new Promise((r) => setTimeout(r, 900));
-    setIsLoading(false);
-    setSubmitted(true);
+    try {
+      await apiClient.post("/auth/forgot-password", { email });
+      setSubmitted(true);
+    } catch (err) {
+      if (err instanceof ApiException) setError(err.message);
+      else setError("Có lỗi xảy ra, vui lòng thử lại.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

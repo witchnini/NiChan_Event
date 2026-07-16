@@ -17,6 +17,7 @@ import {
   getCustomerTransactions,
   getEventMilestones,
   markCustomerNotificationRead,
+  respondToContract,
   sendChatMessage,
   submitCustomerInstallmentPayment,
   submitCustomerPayment,
@@ -104,6 +105,16 @@ customerRouter.get("/contracts", async (req: Request, res: Response) => {
 // GET /api/customer/contracts/:id
 customerRouter.get("/contracts/:id", async (req: Request, res: Response) => {
   const data = await getCustomerContractById(p(req, "id"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// PATCH /api/customer/contracts/:id/respond
+customerRouter.patch("/contracts/:id/respond", async (req: Request, res: Response) => {
+  const { action, rejectionNote } = req.body;
+  if (!action || !['accept', 'reject'].includes(action)) {
+    return sendSuccess(res, { data: null, status: 400 });
+  }
+  const data = await respondToContract(p(req, "id"), req.user!.userId, action, rejectionNote);
   sendSuccess(res, { data });
 });
 

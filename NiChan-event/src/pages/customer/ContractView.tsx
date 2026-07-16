@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, Link, useLocation } from "react-router-dom";
-import { ArrowLeft, Download } from "lucide-react";
+import { useParams, Link, useLocation, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Download, FileText, ClipboardCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
@@ -8,14 +8,20 @@ import ContractDocument, { type FullContract } from "@/components/features/contr
 import { exportContractPdf } from "@/lib/contractPdf";
 import { useAuth } from "@/contexts/AuthContext";
 
+type VersionPurpose = "original" | "settlement";
+
 const ContractView = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const docRef = useRef<HTMLDivElement>(null);
   const [contract, setContract] = useState<FullContract | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [viewPurpose, setViewPurpose] = useState<VersionPurpose>(
+    (searchParams.get("view") as VersionPurpose) || "original",
+  );
 
   const isPortalView = location.pathname.startsWith("/admin") || location.pathname.startsWith("/ban-to-chuc");
   const backPath =
@@ -36,7 +42,17 @@ const ContractView = () => {
             : user.role === "organizer"
               ? `/organizer/contracts/${id}`
               : `/customer/contracts/${id}`;
-        setContract(await apiClient.get<FullContract>(path));
+        const data = await apiClient.get<FullContract>(path);
+        setContract(data);
+
+        // Auto-select settlement view if URL param says so, or if only settlement exists
+        const hasSettlement = data.versions?.some((v) => v.purpose === "settlement");
+        const hasOriginal = data.versions?.some((v) => (v.purpose ?? "original") === "original");
+        if (searchParams.get("view") === "settlement" && hasSettlement) {
+          setViewPurpose("settlement");
+        } else if (!hasOriginal && hasSettlement) {
+          setViewPurpose("settlement");
+        }
       } catch (error) {
         toast.error("Không tải được hợp đồng");
       } finally {
@@ -46,11 +62,16 @@ const ContractView = () => {
     void load();
   }, [id, user?.role]);
 
+  const hasSettlement = contract?.versions?.some((v) => v.purpose === "settlement") ?? false;
+  const hasOriginal = contract?.versions?.some((v) => (v.purpose ?? "original") === "original") ?? false;
+  const showToggle = hasSettlement && hasOriginal;
+
   const handleSavePdf = async () => {
     if (!docRef.current || !contract) return;
     setExporting(true);
     try {
-      await exportContractPdf(docRef.current, contract.contractCode);
+      const suffix = viewPurpose === "settlement" ? "_quyet-toan" : "";
+      await exportContractPdf(docRef.current, contract.contractCode + suffix);
     } catch (error) {
       toast.error("Không tạo được file PDF");
     } finally {
@@ -70,12 +91,39 @@ const ContractView = () => {
           </Button>
         </div>
 
+        {showToggle && (
+          <div className="flex justify-center mb-6">
+            <div className="inline-flex rounded-xl bg-surface-low p-1 gap-1">
+              <button
+                onClick={() => setViewPurpose("original")}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 font-body text-sm font-medium transition-all ${
+                  viewPurpose === "original"
+                    ? "bg-surface-lowest text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <FileText size={16} /> Hợp đồng gốc
+              </button>
+              <button
+                onClick={() => setViewPurpose("settlement")}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 font-body text-sm font-medium transition-all ${
+                  viewPurpose === "settlement"
+                    ? "bg-surface-lowest text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ClipboardCheck size={16} /> Biên bản quyết toán
+              </button>
+            </div>
+          </div>
+        )}
+
         {loading && <p className="text-center font-body text-muted-foreground">Đang tải hợp đồng...</p>}
         {!loading && !contract && <p className="text-center font-body text-muted-foreground">Không tìm thấy hợp đồng.</p>}
 
         {contract && (
           <div className="shadow-ambient rounded-sm overflow-hidden">
-            <ContractDocument ref={docRef} contract={contract} />
+            <ContractDocument ref={docRef} contract={contract} versionPurpose={viewPurpose} />
           </div>
         )}
       </div>

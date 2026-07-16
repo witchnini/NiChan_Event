@@ -37,5 +37,12 @@ export const updateContractSchema = z.object({
   lineItems: z.array(contractLineItemSchema).min(1).optional(),
 });
 
+export const createSettlementSchema = z.object({
+  lineItems: z.array(contractLineItemSchema).min(1).optional(),
+  scopeText: z.string().min(1).optional(),
+  generalTerms: z.string().min(1).optional(),
+});
+
 export type CreateContractInput = z.infer<typeof createContractSchema>;
 export type UpdateContractInput = z.infer<typeof updateContractSchema>;
+export type CreateSettlementInput = z.infer<typeof createSettlementSchema>;

@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   Calculator,
+  ClipboardCheck,
   ClipboardList,
   Edit2,
   Eye,
@@ -45,12 +46,26 @@ type ContractLineItem = {
 type ContractVersion = {
   id: string;
   versionLabel: string;
+  purpose?: string;
   scopeText?: string;
   paymentTerms?: string;
   generalTerms?: string;
   documentUrl?: string | null;
   createdAt: string;
   lineItems?: ContractLineItem[];
+};
+
+type SettlementPreview = {
+  contractId: string;
+  contractCode: string;
+  eventName: string;
+  eventStatus: string;
+  currentContractStatus: string;
+  originalTotal: number;
+  settlementTotal: number;
+  difference: number;
+  lineItems: ContractLineItem[];
+  budgetItemCount: number;
 };
 
 type ContractDocument = {
@@ -69,6 +84,8 @@ type Contract = {
   currentVersion: string;
   sentAt?: string | null;
   signedAt?: string | null;
+  respondedAt?: string | null;
+  rejectionNote?: string | null;
   createdAt?: string | null;
   event?: {
     id: string;
@@ -139,6 +156,7 @@ type ContractForm = {
   eventId: string;
   customerUserId: string;
   versionLabel: string;
+  totalValue: string;
   scopeText: string;
   paymentTerms: string;
   generalTerms: string;
@@ -963,6 +981,7 @@ const emptyForm = (): ContractForm => ({
   eventId: "",
   customerUserId: "",
   versionLabel: "1.0",
+  totalValue: "",
   scopeText: "",
   paymentTerms: "",
   generalTerms: "",
@@ -1021,6 +1040,10 @@ const AdminContracts = () => {
   const [loading, setLoading] = useState(true);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [servicesLoading, setServicesLoading] = useState(false);
+  const [settlementPreview, setSettlementPreview] = useState<SettlementPreview | null>(null);
+  const [settlementLineItems, setSettlementLineItems] = useState<LineItemForm[]>([]);
+  const [settlementLoading, setSettlementLoading] = useState(false);
+  const [settlementCreating, setSettlementCreating] = useState(false);
 
   const quoteTotal = useMemo(
     () => form.lineItems.reduce((sum, item) => sum + lineAmount(item), 0),
@@ -1358,16 +1381,8 @@ const AdminContracts = () => {
       return false;
     }
 
-    if (quoteTotal <= 0) {
-      toast.error("Tổng báo giá phải lớn hơn 0");
-      return false;
-    }
-
-    const invalidItem = form.lineItems.find(
-      (item) => !item.category.trim() || toNumber(item.quantity) <= 0 || toNumber(item.unitPrice) < 0,
-    );
-    if (invalidItem) {
-      toast.error("Vui lòng kiểm tra hạng mục, số lượng và đơn giá");
+    if (toNumber(form.totalValue) <= 0 && quoteTotal <= 0) {
+      toast.error("Tổng giá trị hợp đồng phải lớn hơn 0");
       return false;
     }
 
@@ -1387,12 +1402,11 @@ const AdminContracts = () => {
       await apiClient.post("/admin/contracts", {
         eventId: form.eventId,
         customerUserId: form.customerUserId,
-        totalValue: quoteTotal,
+        totalValue: toNumber(form.totalValue),
         versionLabel: form.versionLabel || "1.0",
         scopeText: form.scopeText,
         paymentTerms: form.paymentTerms,
         generalTerms: form.generalTerms,
-        lineItems: normalizedLineItems(),
       });
       toast.success("Đã tạo hợp đồng");
       setCreateOpen(false);
@@ -1428,6 +1442,7 @@ const AdminContracts = () => {
         eventId: detail.event?.id ?? "",
         customerUserId: detail.customerUser?.id ?? "",
         versionLabel: detail.currentVersion ?? "1.0",
+        totalValue: String(detail.totalValue ?? ""),
         scopeText: latest?.scopeText ?? "",
         paymentTerms: latest?.paymentTerms ?? "",
         generalTerms: latest?.generalTerms ?? "",
@@ -1493,6 +1508,76 @@ const AdminContracts = () => {
       await loadContracts();
     } catch (error) {
       toast.error("Chỉ có thể gửi hợp đồng ở trạng thái bản nháp");
+    }
+  };
+
+  const openSettlementPreview = async (contract: Contract) => {
+    setSettlementLoading(true);
+    try {
+      const preview = await apiClient.get<SettlementPreview>(
+        `/admin/contracts/${contract.id}/settlement-preview`,
+      );
+      setSettlementPreview(preview);
+      // Pre-fill editable line items from budget data
+      setSettlementLineItems(
+        preview.lineItems.length > 0
+          ? preview.lineItems.map((item) => ({
+              category: item.category ?? "",
+              description: String(item.description ?? ""),
+              unit: String(item.unit ?? "Trọn gói"),
+              quantity: String(item.quantity ?? 1),
+              unitPrice: String(item.unitPrice ?? 0),
+              note: String(item.note ?? ""),
+            }))
+          : [emptyLineItem()],
+      );
+    } catch (error) {
+      toast.error("Không tải được dữ liệu quyết toán. Hãy kiểm tra budget đã có chi phí thực tế chưa.");
+    } finally {
+      setSettlementLoading(false);
+    }
+  };
+
+  const settlementTotal = useMemo(
+    () => settlementLineItems.reduce((sum, item) => sum + toNumber(item.quantity) * toNumber(item.unitPrice), 0),
+    [settlementLineItems],
+  );
+
+  const updateSettlementItem = (index: number, patch: Partial<LineItemForm>) => {
+    setSettlementLineItems((items) =>
+      items.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const handleCreateSettlement = async () => {
+    if (!settlementPreview) return;
+    const validItems = settlementLineItems.filter(
+      (item) => item.category.trim() && toNumber(item.unitPrice) > 0,
+    );
+    if (validItems.length === 0) {
+      toast.error("Cần ít nhất 1 hạng mục có giá trị");
+      return;
+    }
+    setSettlementCreating(true);
+    try {
+      await apiClient.post(`/admin/contracts/${settlementPreview.contractId}/settlement`, {
+        lineItems: validItems.map((item) => ({
+          category: item.category.trim(),
+          description: item.description.trim() || null,
+          unit: item.unit.trim() || null,
+          quantity: toNumber(item.quantity) || 1,
+          unitPrice: toNumber(item.unitPrice),
+          note: item.note.trim() || null,
+        })),
+      });
+      toast.success("Đã tạo biên bản quyết toán thành công");
+      setSettlementPreview(null);
+      setSettlementLineItems([]);
+      await loadContracts();
+    } catch (error) {
+      toast.error("Tạo biên bản quyết toán thất bại");
+    } finally {
+      setSettlementCreating(false);
     }
   };
 
@@ -1704,10 +1789,29 @@ const AdminContracts = () => {
         />
       </div>
 
-      <div>
-        <label className="mb-1 block font-body text-sm text-foreground">Bảng báo giá gửi khách *</label>
-        {renderLineItemEditor()}
-      </div>
+      {mode === "create" ? (
+        <div>
+          <label className="mb-1 block font-body text-sm text-foreground">Tổng giá trị hợp đồng dự kiến *</label>
+          <Input
+            type="number"
+            value={form.totalValue}
+            onChange={(event) => setForm((current) => ({ ...current, totalValue: event.target.value }))}
+            placeholder="Nhập tổng giá trị (đ)"
+            min={0}
+            className="rounded-lg border-none bg-surface-lowest font-body"
+          />
+          {toNumber(form.totalValue) > 0 && (
+            <p className="mt-1 font-body text-xs text-muted-foreground">
+              {money(form.totalValue)} — Chi tiết các hạng mục sẽ được quyết toán sau khi sự kiện hoàn thành.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div>
+          <label className="mb-1 block font-body text-sm text-foreground">Bảng báo giá *</label>
+          {renderLineItemEditor()}
+        </div>
+      )}
 
       <div className="rounded-lg border border-border bg-surface-low p-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-end">
@@ -1772,7 +1876,7 @@ const AdminContracts = () => {
       </div>
       {mode === "edit" && (
         <p className="font-body text-xs text-muted-foreground">
-          Lưu thay đổi nội dung hoặc bảng báo giá sẽ tạo một phiên bản hợp đồng mới.
+          Lưu thay đổi nội dung sẽ tạo một phiên bản hợp đồng mới.
         </p>
       )}
     </div>
@@ -1858,9 +1962,24 @@ const AdminContracts = () => {
                 </TableCell>
                 <TableCell className="font-body text-sm text-muted-foreground">v{contract.currentVersion}</TableCell>
                 <TableCell>
-                  <span className={`rounded-full px-3 py-1 font-body text-xs font-semibold ${statusColors[contract.status] ?? "bg-muted text-muted-foreground"}`}>
-                    {statusLabel[contract.status] ?? contract.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-3 py-1 font-body text-xs font-semibold ${statusColors[contract.status] ?? "bg-muted text-muted-foreground"}`}>
+                      {statusLabel[contract.status] ?? contract.status}
+                    </span>
+                    {contract.status === "sent" && contract.rejectionNote && (
+                      <span
+                        className="rounded-full bg-destructive/10 px-2 py-0.5 font-body text-[10px] font-semibold text-destructive cursor-help"
+                        title={`KH từ chối: ${contract.rejectionNote}`}
+                      >
+                        KH từ chối
+                      </span>
+                    )}
+                    {contract.status === "active" && contract.respondedAt && (
+                      <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[10px] font-semibold text-secondary">
+                        KH đồng ý
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1">
@@ -1911,6 +2030,16 @@ const AdminContracts = () => {
                         {contract.status === "draft" && (
                           <DropdownMenuItem onClick={() => handleSend(contract)}>
                             <Send size={12} className="mr-2" /> Gửi khách hàng
+                          </DropdownMenuItem>
+                        )}
+                        {(contract.status === "active" || contract.status === "sent") && (
+                          <DropdownMenuItem onClick={() => openSettlementPreview(contract)}>
+                            <ClipboardCheck size={12} className="mr-2" /> Tạo biên bản quyết toán
+                          </DropdownMenuItem>
+                        )}
+                        {contract.status === "liquidated" && (
+                          <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}?view=settlement`)}>
+                            <ClipboardCheck size={12} className="mr-2" /> Xem biên bản quyết toán
                           </DropdownMenuItem>
                         )}
                         <DropdownMenuSeparator />
@@ -2094,6 +2223,160 @@ const AdminContracts = () => {
                 <Send size={14} className="mr-1" /> Gửi khách
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Settlement editable dialog */}
+      <Dialog open={!!settlementPreview} onOpenChange={() => { setSettlementPreview(null); setSettlementLineItems([]); }}>
+        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[900px]">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Tạo biên bản quyết toán</DialogTitle>
+          </DialogHeader>
+          {settlementPreview && (
+            <div className="space-y-5">
+              {/* Contract info */}
+              <div className="rounded-lg bg-surface-low p-4 space-y-2 font-body text-sm">
+                <p className="text-muted-foreground">Hợp đồng: <span className="font-semibold text-foreground">{settlementPreview.contractCode}</span></p>
+                <p className="text-muted-foreground">Sự kiện: <span className="font-semibold text-foreground">{settlementPreview.eventName}</span></p>
+              </div>
+
+              {/* Summary totals */}
+              <div className="rounded-lg border border-border p-4 space-y-3 font-body text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Giá trị hợp đồng ban đầu</span>
+                  <span className="font-semibold text-foreground">{money(settlementPreview.originalTotal)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Tổng chi phí thực tế (bên dưới)</span>
+                  <span className="font-semibold text-foreground">{money(settlementTotal)}</span>
+                </div>
+                <div className="flex justify-between border-t border-border pt-3">
+                  <span className="font-semibold text-foreground">Chênh lệch</span>
+                  {(() => {
+                    const diff = settlementTotal - settlementPreview.originalTotal;
+                    return (
+                      <span className={`font-semibold ${diff > 0 ? "text-destructive" : diff < 0 ? "text-secondary" : "text-foreground"}`}>
+                        {diff > 0 ? "+" : ""}{money(diff)}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Editable line items */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="font-body text-sm font-semibold text-foreground">Chi tiết hạng mục quyết toán</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSettlementLineItems((items) => [...items, emptyLineItem()])}
+                  >
+                    <Plus size={14} className="mr-1" /> Thêm
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  {settlementLineItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className="rounded-lg border border-border bg-surface-low p-3 space-y-2"
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 space-y-2">
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div>
+                              <label className="font-body text-xs text-muted-foreground">Hạng mục *</label>
+                              <Input
+                                value={item.category}
+                                onChange={(e) => updateSettlementItem(index, { category: e.target.value })}
+                                placeholder="Tên hạng mục"
+                                className="mt-1 bg-surface-lowest font-body text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="font-body text-xs text-muted-foreground">Mô tả / NCC</label>
+                              <Input
+                                value={item.description}
+                                onChange={(e) => updateSettlementItem(index, { description: e.target.value })}
+                                placeholder="Mô tả hoặc nhà cung cấp"
+                                className="mt-1 bg-surface-lowest font-body text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="font-body text-xs text-muted-foreground">Số lượng</label>
+                              <Input
+                                type="number"
+                                value={item.quantity}
+                                onChange={(e) => updateSettlementItem(index, { quantity: e.target.value })}
+                                min={1}
+                                className="mt-1 bg-surface-lowest font-body text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="font-body text-xs text-muted-foreground">Đơn vị</label>
+                              <Input
+                                value={item.unit}
+                                onChange={(e) => updateSettlementItem(index, { unit: e.target.value })}
+                                placeholder="gói"
+                                className="mt-1 bg-surface-lowest font-body text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="font-body text-xs text-muted-foreground">Đơn giá *</label>
+                              <Input
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(e) => updateSettlementItem(index, { unitPrice: e.target.value })}
+                                min={0}
+                                className="mt-1 bg-surface-lowest font-body text-sm"
+                              />
+                            </div>
+                          </div>
+                          {toNumber(item.quantity) > 0 && toNumber(item.unitPrice) > 0 && (
+                            <p className="font-body text-xs text-muted-foreground text-right">
+                              Thành tiền: <span className="font-semibold text-foreground">{money(toNumber(item.quantity) * toNumber(item.unitPrice))}</span>
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive shrink-0 mt-4"
+                          onClick={() => setSettlementLineItems((items) => items.filter((_, i) => i !== index))}
+                          disabled={settlementLineItems.length <= 1}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-center justify-between">
+                  <span className="font-body text-sm font-semibold text-primary">Tổng cộng</span>
+                  <span className="font-serif text-headline-md text-primary">{money(settlementTotal)}</span>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-surface-low p-3 font-body text-xs text-muted-foreground">
+                Khi xác nhận, hệ thống sẽ tạo phiên bản quyết toán (QT-1.0), cập nhật giá trị hợp đồng, và chuyển trạng thái sang "Đã thanh lý".
+              </div>
+            </div>
+          )}
+          <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background/95 px-6 py-4 backdrop-blur">
+            <Button variant="outline" onClick={() => { setSettlementPreview(null); setSettlementLineItems([]); }}>Hủy</Button>
+            <Button
+              variant="hero"
+              onClick={handleCreateSettlement}
+              disabled={settlementCreating || settlementLineItems.filter((i) => i.category.trim() && toNumber(i.unitPrice) > 0).length === 0}
+            >
+              <ClipboardCheck size={14} className="mr-1" />
+              {settlementCreating ? "Đang tạo..." : "Xác nhận quyết toán"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

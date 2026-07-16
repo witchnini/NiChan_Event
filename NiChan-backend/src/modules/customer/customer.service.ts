@@ -200,6 +200,8 @@ export const getCustomerEventById = async (eventId: string, customerUserId: stri
           currentVersion: true,
           sentAt: true,
           signedAt: true,
+          respondedAt: true,
+          rejectionNote: true,
           transactions: {
             where: { status: { in: payableTransactionStatuses } },
             select: { id: true, amount: true, status: true, paymentMethod: true },
@@ -519,6 +521,136 @@ export const getCustomerContractById = async (contractId: string, customerUserId
   if (contract.customerUserId !== customerUserId)
     throw createError("FORBIDDEN", "You do not have access to this contract", 403);
   return contract;
+};
+
+export const respondToContract = async (
+  contractId: string,
+  customerUserId: string,
+  action: "accept" | "reject",
+  rejectionNote?: string,
+) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    include: {
+      event: { select: { id: true, name: true } },
+      customerUser: { select: { id: true, displayName: true } },
+      createdBy: { select: { id: true } },
+    },
+  });
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  if (contract.customerUserId !== customerUserId)
+    throw createError("FORBIDDEN", "You do not have access to this contract", 403);
+  if (contract.status !== "sent")
+    throw createError("CONFLICT", "Only sent contracts can be responded to", 409);
+
+  const now = new Date();
+  const customerName = contract.customerUser?.displayName ?? "Khách hàng";
+  const eventName = contract.event?.name ?? "";
+
+  if (action === "accept") {
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.contract.update({
+        where: { id: contractId },
+        data: {
+          status: "active",
+          signedAt: now,
+          respondedAt: now,
+          rejectionNote: null,
+        },
+      });
+
+      await tx.eventActivity.create({
+        data: {
+          eventId: contract.eventId,
+          actorUserId: customerUserId,
+          iconName: "check-circle",
+          message: `${customerName} đã đồng ý hợp đồng ${contract.contractCode} cho sự kiện "${eventName}".`,
+        },
+      });
+
+      let notification = null;
+      if (contract.createdBy?.id) {
+        notification = await tx.notification.create({
+          data: {
+            userId: contract.createdBy.id,
+            scope: "admin",
+            type: "contract_accepted",
+            title: "Khách hàng đã đồng ý hợp đồng",
+            message: `${customerName} đã đồng ý hợp đồng ${contract.contractCode} (${eventName}).`,
+            entityType: "contract",
+            entityId: contractId,
+          },
+        });
+      }
+
+      return { updated, notification };
+    });
+
+    if (result.notification && contract.createdBy?.id) {
+      emitNotification(contract.createdBy.id, {
+        id: result.notification.id,
+        type: result.notification.type,
+        title: result.notification.title,
+        message: result.notification.message,
+        entityType: result.notification.entityType,
+        entityId: result.notification.entityId,
+        createdAt: result.notification.createdAt,
+      });
+    }
+
+    return result.updated;
+  }
+
+  // action === "reject"
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.contract.update({
+      where: { id: contractId },
+      data: {
+        respondedAt: now,
+        rejectionNote: rejectionNote?.trim() || "Khách hàng từ chối, chưa nêu lý do.",
+      },
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: contract.eventId,
+        actorUserId: customerUserId,
+        iconName: "x-circle",
+        message: `${customerName} đã từ chối hợp đồng ${contract.contractCode}: "${rejectionNote?.trim() || "Không nêu lý do"}".`,
+      },
+    });
+
+    let notification = null;
+    if (contract.createdBy?.id) {
+      notification = await tx.notification.create({
+        data: {
+          userId: contract.createdBy.id,
+          scope: "admin",
+          type: "contract_rejected",
+          title: "Khách hàng từ chối hợp đồng",
+          message: `${customerName} đã từ chối hợp đồng ${contract.contractCode} (${eventName}). Lý do: ${rejectionNote?.trim() || "Không nêu lý do"}.`,
+          entityType: "contract",
+          entityId: contractId,
+        },
+      });
+    }
+
+    return { updated, notification };
+  });
+
+  if (result.notification && contract.createdBy?.id) {
+    emitNotification(contract.createdBy.id, {
+      id: result.notification.id,
+      type: result.notification.type,
+      title: result.notification.title,
+      message: result.notification.message,
+      entityType: result.notification.entityType,
+      entityId: result.notification.entityId,
+      createdAt: result.notification.createdAt,
+    });
+  }
+
+  return result.updated;
 };
 
 export const getCustomerTransactions = async (customerUserId: string) => {

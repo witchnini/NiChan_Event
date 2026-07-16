@@ -36,6 +36,34 @@ export const consultationSchema = z.object({
   note: z.string().max(2000).optional().nullable(),
 });
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().email("Invalid email"),
+});
+
+export const resetPasswordSchema = z
+  .object({
+    token: z.string().min(1, "Token is required"),
+    password: passwordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.password === d.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+export const verifyEmailSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+});
+
+export const resendVerificationSchema = z.object({
+  email: z.string().email("Invalid email"),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type ConsultationInput = z.infer<typeof consultationSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
+export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>;
+

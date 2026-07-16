@@ -75,8 +75,9 @@ const CustomerProfile = () => {
     }
     try {
       await apiClient.put("/customer/profile/password", {
-        currentPassword: passwords.old,
+        oldPassword: passwords.old,
         newPassword: passwords.new,
+        confirmPassword: passwords.confirm,
       });
       setChangingPassword(false);
       setPasswords({ old: "", new: "", confirm: "" });

@@ -16,6 +16,8 @@ import NotFound from "@/pages/NotFound";
 import Portfolio from "@/pages/Portfolio";
 import PortfolioDetail from "@/pages/PortfolioDetail";
 import Register from "@/pages/Register";
+import ResetPassword from "@/pages/ResetPassword";
+import VerifyEmail from "@/pages/VerifyEmail";
 import ServiceDetail from "@/pages/ServiceDetail";
 import Services from "@/pages/Services";
 import AdminContent from "@/pages/admin/AdminContent";
@@ -74,6 +76,8 @@ export const AppRoutes = () => (
     <Route path="/dang-nhap" element={<Login />} />
     <Route path="/dang-ky" element={<Register />} />
     <Route path="/quen-mat-khau" element={<ForgotPassword />} />
+    <Route path="/xac-thuc-email" element={<VerifyEmail />} />
+    <Route path="/dat-lai-mat-khau" element={<ResetPassword />} />
 
     <Route
       path="/ban-to-chuc"

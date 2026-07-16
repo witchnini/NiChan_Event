@@ -1,14 +1,43 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "../../lib/prisma";
 import { signToken } from "../../lib/jwt";
 import { emitNotification } from "../../lib/socket";
+import { sendEmail } from "../../lib/email";
+import {
+  verifyEmailTemplate,
+  resetPasswordTemplate,
+  consultationReceivedTemplate,
+  adminConsultationNotifyTemplate,
+} from "../../lib/email-templates";
 import { createError } from "../../middleware/errorHandler";
-import type { RegisterInput, LoginInput, ConsultationInput } from "./auth.schema";
+import type {
+  RegisterInput,
+  LoginInput,
+  ConsultationInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  VerifyEmailInput,
+  ResendVerificationInput,
+} from "./auth.schema";
 
 const SALT_ROUNDS = 12;
 const PORTAL_ROLES = new Set(["admin", "organizer", "customer"]);
 const REQUEST_CODE_UNIQUE_VIOLATION = "P2002";
 const MAX_REQUEST_CODE_ATTEMPTS = 5;
+
+// Token expiry durations
+const VERIFY_EMAIL_HOURS = 24;
+const RESET_PASSWORD_HOURS = 1;
+
+// Cooldown period between email requests (in seconds)
+const EMAIL_COOLDOWN_SECONDS = 60;
+
+const addHours = (hours: number) =>
+  new Date(Date.now() + hours * 60 * 60 * 1000);
+
+const isWithinCooldown = (createdAt: Date): boolean =>
+  Date.now() - createdAt.getTime() < EMAIL_COOLDOWN_SECONDS * 1000;
 
 const buildAuthUser = (user: {
   id: string;
@@ -16,12 +45,14 @@ const buildAuthUser = (user: {
   role: string;
   displayName: string;
   avatarUrl?: string | null;
+  emailVerified?: boolean;
 }) => ({
   userId: user.id,
   email: user.email,
   role: user.role,
   displayName: user.displayName,
   avatarUrl: user.avatarUrl ?? null,
+  emailVerified: user.emailVerified ?? false,
 });
 
 // ─── Register ─────────────────────────────────────────────────────────────────
@@ -44,13 +75,33 @@ export const register = async (input: RegisterInput) => {
       phone: input.phone,
       role: "customer",
       status: "active",
+      emailVerified: false,
       customerProfile: {
         create: { fullName: input.name },
       },
     },
-    select: { id: true, email: true, role: true, displayName: true, avatarUrl: true },
+    select: { id: true, email: true, role: true, displayName: true, avatarUrl: true, emailVerified: true },
   });
 
+  // Create verification token and send email (fire-and-forget)
+  const verificationToken = crypto.randomUUID();
+  await prisma.emailVerificationToken.create({
+    data: {
+      userId: user.id,
+      token: verificationToken,
+      expiresAt: addHours(VERIFY_EMAIL_HOURS),
+    },
+  });
+
+  sendEmail({
+    to: user.email,
+    subject: "Xác thực email — NiChan Events",
+    html: verifyEmailTemplate(user.displayName, verificationToken),
+  }).catch((err) => {
+    console.warn("[VERIFICATION_EMAIL_FAILED]", err);
+  });
+
+  // Option B: allow login immediately, with emailVerified = false
   const token = signToken({ userId: user.id, role: user.role });
 
   return {
@@ -72,6 +123,7 @@ export const login = async (input: LoginInput) => {
       status: true,
       displayName: true,
       avatarUrl: true,
+      emailVerified: true,
     },
   });
 
@@ -115,6 +167,7 @@ export const getCurrentUser = async (userId: string) => {
       status: true,
       displayName: true,
       avatarUrl: true,
+      emailVerified: true,
     },
   });
 
@@ -137,6 +190,183 @@ export const logout = async () => {
   return { loggedOut: true };
 };
 
+// ─── Email Verification ───────────────────────────────────────────────────────
+
+export const verifyEmail = async (input: VerifyEmailInput) => {
+  const record = await prisma.emailVerificationToken.findUnique({
+    where: { token: input.token },
+    include: { user: { select: { id: true, emailVerified: true } } },
+  });
+
+  if (!record) {
+    throw createError("NOT_FOUND", "Mã xác thực không hợp lệ", 400);
+  }
+
+  if (record.usedAt) {
+    return { alreadyVerified: true, message: "Email đã được xác thực trước đó" };
+  }
+
+  if (record.expiresAt < new Date()) {
+    throw createError("BAD_REQUEST", "Mã xác thực đã hết hạn. Vui lòng yêu cầu gửi lại.", 400);
+  }
+
+  // Mark token as used and update user
+  await prisma.$transaction([
+    prisma.emailVerificationToken.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.user.update({
+      where: { id: record.userId },
+      data: { emailVerified: true },
+    }),
+  ]);
+
+  return { alreadyVerified: false, message: "Xác thực email thành công!" };
+};
+
+export const resendVerification = async (input: ResendVerificationInput) => {
+  const user = await prisma.user.findFirst({
+    where: { email: input.email, deletedAt: null },
+    select: { id: true, email: true, displayName: true, emailVerified: true },
+  });
+
+  const successMessage = "Nếu email tồn tại, chúng tôi đã gửi lại email xác thực.";
+
+  if (!user) {
+    // Don't reveal whether email exists
+    return { message: successMessage };
+  }
+
+  if (user.emailVerified) {
+    return { message: "Email đã được xác thực." };
+  }
+
+  // Cooldown check — prevent spamming
+  const recentToken = await prisma.emailVerificationToken.findFirst({
+    where: { userId: user.id, usedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+
+  if (recentToken && isWithinCooldown(recentToken.createdAt)) {
+    return { message: successMessage };
+  }
+
+  // Invalidate old tokens
+  await prisma.emailVerificationToken.updateMany({
+    where: { userId: user.id, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+
+  // Create new token
+  const token = crypto.randomUUID();
+  await prisma.emailVerificationToken.create({
+    data: {
+      userId: user.id,
+      token,
+      expiresAt: addHours(VERIFY_EMAIL_HOURS),
+    },
+  });
+
+  sendEmail({
+    to: user.email,
+    subject: "Xác thực email — NiChan Events",
+    html: verifyEmailTemplate(user.displayName, token),
+  }).catch((err) => {
+    console.warn("[RESEND_VERIFICATION_EMAIL_FAILED]", err);
+  });
+
+  return { message: successMessage };
+};
+
+// ─── Password Reset ──────────────────────────────────────────────────────────
+
+export const forgotPassword = async (input: ForgotPasswordInput) => {
+  const user = await prisma.user.findFirst({
+    where: { email: input.email, deletedAt: null },
+    select: { id: true, email: true, displayName: true },
+  });
+
+  // Always return success to prevent email enumeration
+  const successMessage = "Nếu email tồn tại, chúng tôi đã gửi liên kết đặt lại mật khẩu.";
+
+  if (!user) {
+    return { message: successMessage };
+  }
+
+  // Cooldown check — prevent spamming
+  const recentToken = await prisma.passwordResetToken.findFirst({
+    where: { userId: user.id, usedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+
+  if (recentToken && isWithinCooldown(recentToken.createdAt)) {
+    return { message: successMessage };
+  }
+
+  // Invalidate old reset tokens
+  await prisma.passwordResetToken.updateMany({
+    where: { userId: user.id, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+
+  // Create new reset token
+  const token = crypto.randomUUID();
+  await prisma.passwordResetToken.create({
+    data: {
+      userId: user.id,
+      token,
+      expiresAt: addHours(RESET_PASSWORD_HOURS),
+    },
+  });
+
+  sendEmail({
+    to: user.email,
+    subject: "Đặt lại mật khẩu — NiChan Events",
+    html: resetPasswordTemplate(user.displayName, token),
+  }).catch((err) => {
+    console.warn("[RESET_PASSWORD_EMAIL_FAILED]", err);
+  });
+
+  return { message: successMessage };
+};
+
+export const resetPassword = async (input: ResetPasswordInput) => {
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { token: input.token },
+    include: { user: { select: { id: true } } },
+  });
+
+  if (!record) {
+    throw createError("NOT_FOUND", "Mã đặt lại mật khẩu không hợp lệ", 400);
+  }
+
+  if (record.usedAt) {
+    throw createError("BAD_REQUEST", "Mã đặt lại mật khẩu đã được sử dụng", 400);
+  }
+
+  if (record.expiresAt < new Date()) {
+    throw createError("BAD_REQUEST", "Mã đặt lại mật khẩu đã hết hạn. Vui lòng yêu cầu gửi lại.", 400);
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
+
+  await prisma.$transaction([
+    prisma.passwordResetToken.update({
+      where: { id: record.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.user.update({
+      where: { id: record.userId },
+      data: { passwordHash },
+    }),
+  ]);
+
+  return { message: "Đặt lại mật khẩu thành công! Bạn có thể đăng nhập bằng mật khẩu mới." };
+};
+
 // ─── Consultation Request ─────────────────────────────────────────────────────
 
 const notifyAdminsOfConsultationRequest = async (request: {
@@ -144,14 +374,17 @@ const notifyAdminsOfConsultationRequest = async (request: {
   requestCode: string;
   customerName: string;
   eventType: string;
+  phone: string;
+  email: string;
 }) => {
   const admins = await prisma.user.findMany({
     where: { role: "admin", status: "active", deletedAt: null },
-    select: { id: true },
+    select: { id: true, email: true },
   });
 
   await Promise.all(
     admins.map(async (admin) => {
+      // In-app notification (existing)
       const notification = await prisma.notification.create({
         data: {
           userId: admin.id,
@@ -173,6 +406,23 @@ const notifyAdminsOfConsultationRequest = async (request: {
         entityId: notification.entityId ?? null,
         createdAt: notification.createdAt,
       });
+
+      // Email notification (new)
+      if (admin.email) {
+        sendEmail({
+          to: admin.email,
+          subject: `Yêu cầu tư vấn mới: ${request.requestCode}`,
+          html: adminConsultationNotifyTemplate(
+            request.requestCode,
+            request.customerName,
+            request.eventType,
+            request.phone,
+            request.email,
+          ),
+        }).catch((err) => {
+          console.warn("[ADMIN_CONSULTATION_EMAIL_FAILED]", err);
+        });
+      }
     }),
   );
 };
@@ -243,8 +493,26 @@ export const createConsultationRequest = async (
         select: { id: true, requestCode: true, status: true, customerName: true, eventType: true },
       });
 
-      await notifyAdminsOfConsultationRequest(request).catch((error) => {
+      // Notify admins (in-app + email)
+      await notifyAdminsOfConsultationRequest({
+        ...request,
+        phone: input.phone,
+        email: input.email,
+      }).catch((error) => {
         console.warn("[CONSULTATION_NOTIFICATION_FAILED]", error);
+      });
+
+      // Send confirmation email to customer
+      sendEmail({
+        to: input.email,
+        subject: `Xác nhận yêu cầu tư vấn ${request.requestCode} — NiChan Events`,
+        html: consultationReceivedTemplate(
+          input.customerName,
+          request.requestCode,
+          input.eventType,
+        ),
+      }).catch((err) => {
+        console.warn("[CONSULTATION_CONFIRM_EMAIL_FAILED]", err);
       });
 
       return {

@@ -9,6 +9,7 @@ export type AuthUser = {
   displayName: string;
   email: string;
   avatarUrl?: string | null;
+  emailVerified?: boolean;
 };
 
 type AuthContextValue = {

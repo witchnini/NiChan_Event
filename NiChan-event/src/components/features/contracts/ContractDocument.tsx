@@ -26,6 +26,7 @@ type ContractLineItem = {
 
 type ContractVersion = {
   versionLabel?: string;
+  purpose?: string; // "original" | "settlement"
   scopeText?: string;
   paymentTerms?: string;
   generalTerms?: string;
@@ -197,12 +198,125 @@ const QuotationTable = ({ items, totalValue }: { items: ContractLineItem[]; tota
   );
 };
 
-const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(({ contract }, ref) => {
-  const version = contract.versions?.[0];
+type ContractDocumentProps = {
+  contract: FullContract;
+  versionPurpose?: "original" | "settlement";
+};
+
+const ContractDocument = forwardRef<HTMLDivElement, ContractDocumentProps>(({ contract, versionPurpose }, ref) => {
+  // Pick version based on purpose prop, falling back to the first version
+  const version = versionPurpose
+    ? contract.versions?.find((v) => v.purpose === versionPurpose) ?? contract.versions?.[0]
+    : contract.versions?.[0];
+  const isSettlement = (version?.purpose ?? "original") === "settlement";
   const lineItems = version?.lineItems ?? [];
   const customerName = contract.customerUser?.displayName ?? contract.event?.consultationRequest?.customerName ?? "...";
   const eventName = contract.event ? getEventDisplayName(contract.event) : "...";
   const signDate = formatDateParts(contract.signedAt ?? contract.sentAt ?? contract.createdAt);
+
+  // For settlement, also find the original version to show comparison
+  const originalVersion = isSettlement
+    ? contract.versions?.find((v) => (v.purpose ?? "original") === "original")
+    : null;
+  const originalTotal = originalVersion
+    ? originalVersion.lineItems?.reduce((sum, li) => sum + (Number(li.amount) || Number(li.quantity) * Number(li.unitPrice)), 0) ?? 0
+    : 0;
+  const settlementTotal = lineItems.reduce(
+    (sum, li) => sum + (Number(li.amount) || Number(li.quantity) * Number(li.unitPrice)),
+    0,
+  );
+
+  if (isSettlement) {
+    return (
+      <div
+        ref={ref}
+        className="contract-print-area mx-auto bg-white p-10 font-body text-sm text-black"
+        style={{ maxWidth: "820px" }}
+      >
+        <div className="mb-6 text-center">
+          <p className="font-bold uppercase">Cộng hòa xã hội chủ nghĩa Việt Nam</p>
+          <p className="font-semibold">Độc lập - Tự do - Hạnh phúc</p>
+          <p>----------oOo----------</p>
+        </div>
+
+        <div className="mb-6 text-center">
+          <h1 className="font-serif text-2xl font-bold uppercase">Biên bản nghiệm thu và thanh lý hợp đồng</h1>
+          <p className="mt-1">Số: {contract.contractCode} · Phiên bản {version?.versionLabel ?? contract.currentVersion}</p>
+        </div>
+
+        <div className="mb-5 text-justify leading-relaxed">
+          <p>- Căn cứ Hợp đồng dịch vụ tổ chức sự kiện số {contract.contractCode} đã ký;</p>
+          <p>- Căn cứ thực tế thực hiện hợp đồng;</p>
+          <p className="mt-2">
+            Hôm nay, ngày {signDate.day} tháng {signDate.month} năm {signDate.year}, chúng tôi gồm:
+          </p>
+        </div>
+
+        <div className="mb-4">
+          <p className="font-bold">BÊN A (BÊN CUNG CẤP DỊCH VỤ):</p>
+          <p>Tên đơn vị: <span className="font-semibold">{PROVIDER.name}</span></p>
+          <p>Địa chỉ: {PROVIDER.address}</p>
+          <p>Mã số thuế: {PROVIDER.taxCode} · Điện thoại: {PROVIDER.phone} · Email: {PROVIDER.email}</p>
+          <p>Đại diện: <span className="font-semibold">{PROVIDER.representative}</span> · Chức vụ: {PROVIDER.position}</p>
+        </div>
+
+        <div className="mb-5">
+          <p className="font-bold">BÊN B (KHÁCH HÀNG):</p>
+          <p>Họ và tên: <span className="font-semibold">{customerName}</span></p>
+          {contract.customerUser?.phone && <p>Điện thoại: {contract.customerUser.phone}</p>}
+          {contract.customerUser?.email && <p>Email: {contract.customerUser.email}</p>}
+        </div>
+
+        <p className="mb-5">Hai bên cùng xác nhận nghiệm thu và thanh lý hợp đồng với nội dung sau:</p>
+
+        <Clause index={1} title="Nội dung nghiệm thu">
+          <p className="mb-2">
+            Bên A đã hoàn thành cung cấp dịch vụ tổ chức sự kiện: <span className="font-semibold">{eventName}</span>
+            {contract.event?.type ? ` (loại hình: ${contract.event.type})` : ""}.
+          </p>
+          {contract.event?.eventDate && <p>Ngày tổ chức: {formatDate(contract.event.eventDate)}.</p>}
+          {contract.event?.locationText && <p>Địa điểm: {contract.event.locationText}.</p>}
+          <p className="mt-2">{version?.scopeText || "Hai bên xác nhận đã hoàn thành đầy đủ các hạng mục trong hợp đồng."}</p>
+        </Clause>
+
+        <Clause index={2} title="Chi phí thực tế và quyết toán">
+          <p>
+            Tổng chi phí thực tế: <span className="font-bold">{money(settlementTotal)}</span>
+          </p>
+          <p className="italic">(Bằng chữ: {numberToVietnameseWords(settlementTotal)})</p>
+          {originalTotal > 0 && originalTotal !== settlementTotal && (
+            <p className="mt-1 text-xs">
+              (Giá trị hợp đồng ban đầu: {money(originalTotal)} · Chênh lệch: {money(settlementTotal - originalTotal)})
+            </p>
+          )}
+          <p className="mt-3 font-semibold">Chi tiết các hạng mục đã thực hiện:</p>
+          <QuotationTable items={lineItems} totalValue={settlementTotal} />
+        </Clause>
+
+        <Clause index={3} title="Điều khoản thanh lý">
+          {version?.generalTerms || "Hai bên xác nhận đã nghiệm thu đầy đủ các hạng mục dịch vụ. Bên B thanh toán phần còn lại (nếu có) trong vòng 07 ngày kể từ ngày ký biên bản này."}
+        </Clause>
+
+        <Clause index={4} title="Hiệu lực">
+          Biên bản này có hiệu lực kể từ ngày ký, là căn cứ thanh toán và thanh lý hợp đồng số {contract.contractCode}.
+          Biên bản được lập thành 02 bản có giá trị pháp lý như nhau, mỗi bên giữ 01 bản.
+        </Clause>
+
+        <div className="mt-10 grid grid-cols-2 gap-6 text-center">
+          <div>
+            <p className="font-bold uppercase">Đại diện Bên A</p>
+            <p className="text-xs italic">(Ký, ghi rõ họ tên)</p>
+            <p className="mt-16 font-semibold">{PROVIDER.representative}</p>
+          </div>
+          <div>
+            <p className="font-bold uppercase">Đại diện Bên B</p>
+            <p className="text-xs italic">(Ký, ghi rõ họ tên)</p>
+            <p className="mt-16 font-semibold">{customerName}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -257,13 +371,15 @@ const ContractDocument = forwardRef<HTMLDivElement, { contract: FullContract }>(
         <p>{version?.scopeText || "Theo thỏa thuận chi tiết giữa hai bên."}</p>
       </Clause>
 
-      <Clause index={2} title="Báo giá dịch vụ và phương thức thanh toán">
+      <Clause index={2} title="Giá trị hợp đồng và phương thức thanh toán">
         <p>
           Tổng giá trị hợp đồng: <span className="font-bold">{money(contract.totalValue)}</span>
         </p>
         <p className="italic">(Bằng chữ: {numberToVietnameseWords(Number(contract.totalValue))})</p>
-        <p className="mt-3 font-semibold">Phụ lục báo giá chi tiết:</p>
-        <QuotationTable items={lineItems} totalValue={contract.totalValue} />
+        <p className="mt-2">
+          Giá trị trên là mức giá thỏa thuận giữa hai bên cho toàn bộ dịch vụ tổ chức sự kiện.
+          Chi tiết các hạng mục và chi phí thực tế sẽ được quyết toán trong biên bản nghiệm thu sau khi sự kiện hoàn thành.
+        </p>
         <p className="mt-3 font-semibold">Điều khoản thanh toán:</p>
         <p>{version?.paymentTerms || "Theo thỏa thuận giữa hai bên."}</p>
       </Clause>

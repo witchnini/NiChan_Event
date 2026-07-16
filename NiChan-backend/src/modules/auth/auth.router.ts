@@ -4,15 +4,23 @@ import { validate } from "../../middleware/validate";
 import { sendSuccess } from "../../utils/response";
 import {
   consultationSchema,
+  forgotPasswordSchema,
   loginSchema,
   registerSchema,
+  resendVerificationSchema,
+  resetPasswordSchema,
+  verifyEmailSchema,
 } from "./auth.schema";
 import {
   createConsultationRequest,
+  forgotPassword,
   getCurrentUser,
   login,
   logout,
   register,
+  resendVerification,
+  resetPassword,
+  verifyEmail,
 } from "./auth.service";
 
 export const authRouter = Router();
@@ -47,7 +55,53 @@ authRouter.post("/logout", authenticate, async (_req: Request, res: Response) =>
   sendSuccess(res, { data });
 });
 
-// POST /api/public/consultation-requests  (mounted under publicRouter below)
+// ─── Email Verification ───────────────────────────────────────────────────────
+
+// POST /api/auth/verify-email
+authRouter.post(
+  "/verify-email",
+  validate(verifyEmailSchema),
+  async (req: Request, res: Response) => {
+    const data = await verifyEmail(req.body);
+    sendSuccess(res, { data });
+  },
+);
+
+// POST /api/auth/resend-verification
+authRouter.post(
+  "/resend-verification",
+  validate(resendVerificationSchema),
+  async (req: Request, res: Response) => {
+    const data = await resendVerification(req.body);
+    sendSuccess(res, { data });
+  },
+);
+
+// ─── Password Reset ──────────────────────────────────────────────────────────
+
+// POST /api/auth/forgot-password
+authRouter.post(
+  "/forgot-password",
+  validate(forgotPasswordSchema),
+  async (req: Request, res: Response) => {
+    const data = await forgotPassword(req.body);
+    sendSuccess(res, { data });
+  },
+);
+
+// POST /api/auth/reset-password
+authRouter.post(
+  "/reset-password",
+  validate(resetPasswordSchema),
+  async (req: Request, res: Response) => {
+    const data = await resetPassword(req.body);
+    sendSuccess(res, { data });
+  },
+);
+
+// ─── Consultation Request ─────────────────────────────────────────────────────
+// POST /api/public/consultation-requests  (mounted under publicRouter)
+
 export const consultationRouter = Router();
 
 consultationRouter.post(

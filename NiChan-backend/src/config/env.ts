@@ -42,6 +42,16 @@ export const env = {
   cloudinaryApiKey: optionalEnv("CLOUDINARY_API_KEY"),
   cloudinaryApiSecret: optionalEnv("CLOUDINARY_API_SECRET"),
 
+  // Email / SMTP (optional trong dev — dùng Ethereal)
+  smtpHost: optionalEnv("SMTP_HOST"),
+  smtpPort: Number(optionalEnv("SMTP_PORT", "587")),
+  smtpUser: optionalEnv("SMTP_USER"),
+  smtpPass: optionalEnv("SMTP_PASS"),
+  emailFrom: optionalEnv("EMAIL_FROM", "NiChan Events <noreply@nichan.vn>"),
+
+  // App URL (dùng cho email links)
+  appUrl: optionalEnv("APP_URL", "http://localhost:8080"),
+
   // Computed
   isProduction: process.env.NODE_ENV === "production",
   isDevelopment: process.env.NODE_ENV !== "production",
@@ -57,6 +67,9 @@ if (env.isProduction) {
     "CLOUDINARY_CLOUD_NAME",
     "CLOUDINARY_API_KEY",
     "CLOUDINARY_API_SECRET",
+    "SMTP_HOST",
+    "SMTP_USER",
+    "SMTP_PASS",
   ];
   for (const key of required) requireEnv(key);
   console.log("✅ All required environment variables are set");

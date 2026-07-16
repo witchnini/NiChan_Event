@@ -4,11 +4,13 @@ import { validate } from "../../../middleware/validate";
 import { buildMeta, parsePagination } from "../../../utils/pagination";
 import { p, q } from "../../../utils/request";
 import { sendSuccess } from "../../../utils/response";
-import { createContractSchema, updateContractSchema } from "./admin-contracts.schema";
+import { createContractSchema, createSettlementSchema, updateContractSchema } from "./admin-contracts.schema";
 import {
   createContract,
+  createSettlementVersion,
   deleteContract,
   getContractById,
+  getSettlementPreview,
   listContracts,
   sendContract,
   updateContract,
@@ -61,6 +63,26 @@ adminContractsRouter.patch("/:id/send", async (req: Request, res: Response) => {
   const data = await sendContract(p(req, "id"), req.user!.userId);
   sendSuccess(res, { data });
 });
+
+// GET /api/admin/contracts/:id/settlement-preview
+adminContractsRouter.get("/:id/settlement-preview", async (req: Request, res: Response) => {
+  const data = await getSettlementPreview(p(req, "id"));
+  sendSuccess(res, { data });
+});
+
+// POST /api/admin/contracts/:id/settlement
+adminContractsRouter.post(
+  "/:id/settlement",
+  validate(createSettlementSchema),
+  async (req: Request, res: Response) => {
+    const data = await createSettlementVersion(
+      p(req, "id"),
+      req.user!.userId,
+      req.body,
+    );
+    sendSuccess(res, { data });
+  },
+);
 
 // DELETE /api/admin/contracts/:id
 adminContractsRouter.delete("/:id", async (req: Request, res: Response) => {

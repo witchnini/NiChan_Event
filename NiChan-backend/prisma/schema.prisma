@@ -18,6 +18,7 @@ model User {
   passwordHash String
   role         String   // admin | organizer | customer | staff
   status       String   @default("active")  // active | inactive | suspended
+  emailVerified Boolean  @default(false)
   displayName  String
   phone        String?
   avatarUrl    String?
@@ -51,6 +52,8 @@ model User {
   blogPostsCreated  BlogPost[]            @relation("BlogCreator")
   blogPostsUpdated  BlogPost[]            @relation("BlogUpdater")
   eventActivities   EventActivity[]
+  verificationTokens EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -100,6 +103,32 @@ model StaffProfile {
   user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("staff_profiles")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
 }
 
 // ─── Public Content ───────────────────────────────────────────────────────────
@@ -431,6 +460,8 @@ model Contract {
   currentVersion String   
   signedAt       DateTime?
   sentAt         DateTime?
+  respondedAt    DateTime?
+  rejectionNote  String?
   totalValue     Decimal  
   createdById    String   
   createdAt      DateTime @default(now())
@@ -450,6 +481,7 @@ model ContractVersion {
   id           String   @id @default(uuid())
   contractId   String   
   versionLabel String   
+  purpose      String   @default("original") // original | settlement
   scopeText    String   
   paymentTerms String   
   generalTerms String   

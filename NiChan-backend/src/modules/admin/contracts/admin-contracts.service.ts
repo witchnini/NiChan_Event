@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
-import type { CreateContractInput, UpdateContractInput } from "./admin-contracts.schema";
+import type { CreateContractInput, CreateSettlementInput, UpdateContractInput } from "./admin-contracts.schema";
 
 type ContractLineItemInput = NonNullable<CreateContractInput["lineItems"]>[number];
 type StoredContractLineItem = {
@@ -402,10 +402,207 @@ export const sendContract = async (id: string, sentById: string) => {
   });
 };
 
+// ─── Settlement (Quyết toán) ──────────────────────────────────────────────────
+
+export const getSettlementPreview = async (contractId: string) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    include: {
+      event: {
+        include: {
+          budgets: {
+            include: {
+              items: {
+                where: { actualAmount: { gt: 0 } },
+                include: { vendor: { select: { id: true, name: true } } },
+                orderBy: { createdAt: "asc" },
+              },
+            },
+          },
+        },
+      },
+      versions: {
+        where: { purpose: "original" },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: lineItemsInclude },
+      },
+    },
+  });
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+
+  const budgetItems = contract.event.budgets.flatMap((b) => b.items);
+  const lineItems = budgetItems.map((item, index) => ({
+    category: item.category,
+    description: item.vendor?.name || null,
+    unit: "Trọn gói" as string | null,
+    quantity: 1,
+    unitPrice: Number(item.actualAmount),
+    amount: normalizeAmount(Number(item.actualAmount)),
+    note: item.note || null,
+    sortOrder: index,
+  }));
+
+  const totalValue = sumLineItems(lineItems);
+  const originalVersion = contract.versions[0];
+  const originalTotal = originalVersion
+    ? originalVersion.lineItems.reduce((sum, li) => sum + Number(li.amount ?? 0), 0)
+    : Number(contract.totalValue);
+
+  return {
+    contractId,
+    contractCode: contract.contractCode,
+    eventId: contract.eventId,
+    eventName: contract.event.name,
+    eventStatus: contract.event.status,
+    currentContractStatus: contract.status,
+    originalTotal,
+    settlementTotal: totalValue,
+    difference: totalValue - originalTotal,
+    lineItems,
+    budgetItemCount: budgetItems.length,
+  };
+};
+
+export const createSettlementVersion = async (
+  contractId: string,
+  createdById: string,
+  input?: CreateSettlementInput,
+) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          customerUserId: true,
+          budgets: {
+            include: {
+              items: {
+                where: { actualAmount: { gt: 0 } },
+                include: { vendor: { select: { name: true } } },
+                orderBy: { createdAt: "asc" },
+              },
+            },
+          },
+        },
+      },
+      versions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: { lineItems: lineItemsInclude },
+      },
+    },
+  });
+
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  if (contract.status === "cancelled")
+    throw createError("CONFLICT", "Cannot create settlement for a cancelled contract", 409);
+
+  // Check if a settlement version already exists
+  const existingSettlement = await prisma.contractVersion.findFirst({
+    where: { contractId, purpose: "settlement" },
+  });
+  if (existingSettlement)
+    throw createError("CONFLICT", "A settlement version already exists for this contract", 409);
+
+  // Build line items from budget or override
+  const budgetItems = contract.event.budgets.flatMap((b) => b.items);
+  const lineItems = input?.lineItems
+    ? normalizeLineItems(input.lineItems)
+    : budgetItems.map((item, index) => ({
+        category: item.category,
+        description: item.vendor?.name || null,
+        unit: "Trọn gói" as string | null,
+        quantity: 1,
+        unitPrice: Number(item.actualAmount),
+        amount: normalizeAmount(Number(item.actualAmount)),
+        note: item.note || null,
+        sortOrder: index,
+      }));
+
+  if (lineItems.length === 0)
+    throw createError("VALIDATION_ERROR", "No budget items with actual costs found", 400);
+
+  const totalValue = sumLineItems(lineItems);
+  ensurePositiveContractTotal(totalValue);
+
+  const latestVersion = contract.versions[0];
+  const versionLabel = "QT-1.0";
+  const scopeText =
+    input?.scopeText ||
+    `Biên bản nghiệm thu và quyết toán sự kiện "${contract.event.name}". ` +
+      `Căn cứ hợp đồng số ${contract.contractCode}, hai bên xác nhận các hạng mục dịch vụ đã thực hiện và chi phí thực tế như sau.`;
+  const generalTerms =
+    input?.generalTerms ||
+    "Hai bên xác nhận đã nghiệm thu đầy đủ các hạng mục dịch vụ. " +
+      "Bên B thanh toán phần còn lại (nếu có) trong vòng 07 ngày kể từ ngày ký biên bản này. " +
+      "Sau khi thanh toán đủ, hợp đồng được coi là hoàn tất và thanh lý.";
+
+  return prisma.$transaction(async (tx) => {
+    // Create settlement version
+    await tx.contractVersion.create({
+      data: {
+        contractId,
+        versionLabel,
+        purpose: "settlement",
+        scopeText,
+        paymentTerms: latestVersion?.paymentTerms ?? "",
+        generalTerms,
+        createdById,
+        lineItems: { create: lineItems },
+      },
+    });
+
+    // Update contract total and status
+    const updatedContract = await tx.contract.update({
+      where: { id: contractId },
+      data: {
+        totalValue,
+        currentVersion: versionLabel,
+        status: "liquidated",
+      },
+    });
+
+    // Log activity
+    await tx.eventActivity.create({
+      data: {
+        eventId: contract.eventId,
+        actorUserId: createdById,
+        iconName: "clipboard-check",
+        message: `Đã tạo biên bản quyết toán cho hợp đồng ${contract.contractCode}. Tổng chi phí thực tế: ${totalValue.toLocaleString("vi-VN")} đ.`,
+      },
+    });
+
+    // Notify customer
+    await tx.notification.create({
+      data: {
+        userId: contract.event.customerUserId,
+        scope: "customer",
+        type: "contract",
+        title: "Biên bản quyết toán đã được tạo",
+        message: `Biên bản quyết toán cho hợp đồng ${contract.contractCode} (sự kiện ${contract.event.name}) đã được lập. Vui lòng kiểm tra và thanh toán phần còn lại.`,
+        entityType: "contract",
+        entityId: contractId,
+      },
+    });
+
+    return updatedContract;
+  });
+};
+
 export const deleteContract = async (id: string) => {
   const existing = await prisma.contract.findUnique({ where: { id } });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
-  await prisma.contractLineItem.deleteMany({ where: { contractVersion: { contractId: id } } });
-  await prisma.contractVersion.deleteMany({ where: { contractId: id } });
-  await prisma.contract.delete({ where: { id } });
+
+  await prisma.$transaction(async (tx) => {
+    await tx.document.deleteMany({ where: { contractId: id } });
+    await tx.transaction.deleteMany({ where: { contractId: id } });
+    await tx.contractLineItem.deleteMany({ where: { contractVersion: { contractId: id } } });
+    await tx.contractVersion.deleteMany({ where: { contractId: id } });
+    await tx.notification.deleteMany({ where: { entityType: "contract", entityId: id } });
+    await tx.contract.delete({ where: { id } });
+  });
 };

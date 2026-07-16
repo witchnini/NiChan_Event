@@ -22,6 +22,8 @@ type EventContract = {
   currentVersion?: string | null;
   sentAt?: string | null;
   signedAt?: string | null;
+  respondedAt?: string | null;
+  rejectionNote?: string | null;
   transactions?: { id: string; amount: string | number; status: string; paymentMethod?: string | null }[];
   versions?: {
     paymentTerms?: string | null;
@@ -115,6 +117,9 @@ const EventTracking = () => {
   const messagesListRef = useRef<HTMLDivElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
   const paymentFormRef = useRef<HTMLDivElement>(null);
+  const [contractResponding, setContractResponding] = useState(false);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState<string | null>(null);
+  const [rejectionNote, setRejectionNote] = useState("");
 
   const load = async () => {
     if (!id) return;
@@ -208,14 +213,19 @@ const EventTracking = () => {
 
   const settlementLineItems = useMemo(
     () =>
-      contractSummaries.flatMap((contract) =>
-        (contract.versions?.[0]?.lineItems ?? []).map((item) => ({
+      contractSummaries.flatMap((contract) => {
+        // Prefer the settlement version if it exists, otherwise use latest version
+        const settlementVersion = contract.versions?.find((v: { purpose?: string }) => v.purpose === "settlement");
+        const version = settlementVersion ?? contract.versions?.[0];
+        return (version?.lineItems ?? []).map((item) => ({
           ...item,
           contractCode: contract.contractCode,
-        })),
-      ),
+        }));
+      }),
     [contractSummaries],
   );
+
+  const hasLiquidatedContract = contractSummaries.some((c) => c.status === "liquidated");
 
   const selectedContract = useMemo(
     () => contractSummaries.find((contract) => contract.id === paymentForm.contractId),
@@ -406,6 +416,42 @@ const EventTracking = () => {
 
   const money = (value: number) => value.toLocaleString("vi-VN") + "đ";
 
+  const sentContract = event?.contracts?.find((c) => c.status === "sent");
+  const activeContract = event?.contracts?.find((c) => c.status === "active" || c.status === "liquidated");
+
+  const handleContractAccept = async (contractId: string) => {
+    if (!confirm("Bạn xác nhận đồng ý với các điều khoản hợp đồng này?")) return;
+    setContractResponding(true);
+    try {
+      await apiClient.patch(`/customer/contracts/${contractId}/respond`, { action: "accept" });
+      toast.success("Đã xác nhận đồng ý hợp đồng");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Thao tác thất bại");
+    } finally {
+      setContractResponding(false);
+    }
+  };
+
+  const handleContractReject = async () => {
+    if (!rejectDialogOpen) return;
+    setContractResponding(true);
+    try {
+      await apiClient.patch(`/customer/contracts/${rejectDialogOpen}/respond`, {
+        action: "reject",
+        rejectionNote: rejectionNote.trim() || undefined,
+      });
+      toast.success("Đã gửi phản hồi từ chối hợp đồng");
+      setRejectDialogOpen(null);
+      setRejectionNote("");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Thao tác thất bại");
+    } finally {
+      setContractResponding(false);
+    }
+  };
+
   return (
     <div className="min-h-screen pt-24 pb-16">
       <div className="container mx-auto px-6">
@@ -484,6 +530,68 @@ const EventTracking = () => {
                           <span className="font-body text-xs text-muted-foreground">{milestoneDate ? new Date(milestoneDate).toLocaleDateString("vi-VN") : ""}</span>
                         </div>
                         <p className="font-body text-sm text-muted-foreground">{defaultStep.description}</p>
+
+                        {/* Contract response UI for "Báo giá & Thống nhất" step */}
+                        {i === 1 && sentContract && (
+                          <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <FileText size={16} className="text-primary" />
+                              <span className="font-body text-sm font-semibold text-foreground">
+                                {sentContract.contractCode}
+                              </span>
+                              <span className="font-body text-xs text-muted-foreground">
+                                · {money(Number(sentContract.totalValue || 0))}
+                              </span>
+                            </div>
+                            {sentContract.rejectionNote && (
+                              <div className="rounded-md bg-destructive/10 p-2">
+                                <p className="font-body text-xs text-destructive">
+                                  Bạn đã từ chối trước đó: "{sentContract.rejectionNote}"
+                                </p>
+                                <p className="font-body text-xs text-muted-foreground mt-1">
+                                  Hợp đồng đã được cập nhật, vui lòng xem lại.
+                                </p>
+                              </div>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                              <Link to={`/dashboard/hop-dong/${sentContract.id}`}>
+                                <Button variant="outline" size="sm" className="rounded-lg">
+                                  <Eye size={14} className="mr-1" /> Xem hợp đồng
+                                </Button>
+                              </Link>
+                              <Button
+                                variant="hero"
+                                size="sm"
+                                className="rounded-lg"
+                                onClick={() => handleContractAccept(sentContract.id)}
+                                disabled={contractResponding}
+                              >
+                                <CheckCircle size={14} className="mr-1" />
+                                {contractResponding ? "Đang xử lý..." : "Đồng ý"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-lg text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/5"
+                                onClick={() => { setRejectDialogOpen(sentContract.id); setRejectionNote(""); }}
+                                disabled={contractResponding}
+                              >
+                                Từ chối
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                        {i === 1 && activeContract && !sentContract && (
+                          <div className="mt-4 rounded-lg border border-secondary/20 bg-secondary/5 p-3 flex items-center gap-2">
+                            <CheckCircle size={16} className="text-secondary" />
+                            <span className="font-body text-sm text-secondary font-semibold">Đã đồng ý hợp đồng</span>
+                            {activeContract.signedAt && (
+                              <span className="font-body text-xs text-muted-foreground ml-auto">
+                                {new Date(activeContract.signedAt).toLocaleDateString("vi-VN")}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </motion.div>
                   );
@@ -813,10 +921,57 @@ const EventTracking = () => {
                   <CreditCard size={16} /> Thanh toán phần còn lại
                 </Button>
               )}
+              {hasLiquidatedContract && (
+                <Button
+                  variant="outline"
+                  className="mt-3"
+                  onClick={() => {
+                    const liquidatedContract = contractSummaries.find((c) => c.status === "liquidated");
+                    if (liquidatedContract) navigate(`/dashboard/hop-dong/${liquidatedContract.id}?view=settlement`);
+                  }}
+                >
+                  <ClipboardCheck size={16} /> Xem biên bản quyết toán
+                </Button>
+              )}
             </div>
           </motion.div>
         )}
       </div>
+
+      {/* Rejection dialog */}
+      {rejectDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setRejectDialogOpen(null)}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-background rounded-2xl p-6 shadow-xl w-full max-w-md mx-4 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-serif text-headline-md text-foreground">Từ chối hợp đồng</h3>
+            <p className="font-body text-sm text-muted-foreground">
+              Vui lòng cho NiChan biết lý do để chúng tôi có thể điều chỉnh hợp đồng phù hợp hơn.
+            </p>
+            <Textarea
+              value={rejectionNote}
+              onChange={(e) => setRejectionNote(e.target.value)}
+              placeholder="Nhập lý do từ chối (tùy chọn)..."
+              rows={4}
+              className="resize-none rounded-lg border-none bg-surface-lowest font-body"
+            />
+            <div className="flex gap-3 justify-end">
+              <Button variant="outline" onClick={() => setRejectDialogOpen(null)} className="rounded-lg">Hủy</Button>
+              <Button
+                variant="destructive"
+                onClick={handleContractReject}
+                disabled={contractResponding}
+                className="rounded-lg"
+              >
+                {contractResponding ? "Đang gửi..." : "Xác nhận từ chối"}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
