@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
-import { CheckCircle, Circle, Clock, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards, ClipboardCheck, ReceiptText } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { AlertTriangle, Ban, CheckCircle, ChevronRight, Circle, Clock, Filter, ListChecks, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards, ClipboardCheck, ReceiptText, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -24,6 +24,7 @@ type EventContract = {
   signedAt?: string | null;
   respondedAt?: string | null;
   rejectionNote?: string | null;
+  updatedAt?: string | null;
   transactions?: { id: string; amount: string | number; status: string; paymentMethod?: string | null }[];
   versions?: {
     paymentTerms?: string | null;
@@ -60,6 +61,17 @@ type EventDetail = {
 type Milestone = { id: string; title: string; dueDate?: string | null; milestoneDate?: string | null; status: string; description?: string | null };
 type Message = { id: string; senderUserId: string; sender?: { displayName: string } | null; messageText: string; attachmentUrl?: string | null; attachmentType?: string | null; attachmentName?: string | null; sentAt: string };
 type DocumentItem = { id: string; name?: string; fileName?: string; fileType?: string; createdAt: string; status?: string; contractId?: string | null; fileUrl?: string | null; event?: { id: string; name: string } };
+type CustomerTask = {
+  id: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  priority: "low" | "medium" | "high";
+  dueAt?: string | null;
+  completedAt?: string | null;
+  sortOrder?: number | null;
+  createdAt?: string | null;
+};
 type Transaction = {
   id: string;
   description: string;
@@ -78,6 +90,28 @@ type PaymentForm = {
   paymentMethod: string;
   note: string;
 };
+
+type FeedbackPanelState = {
+  contractCode: string;
+  note: string;
+  respondedAt?: string | null;
+  updatedAt?: string | null;
+  mode: "cancelled" | "rejected";
+};
+
+const getNextScheduledTransaction = (items: Transaction[], contractId: string) =>
+  items
+    .filter(
+      (transaction) =>
+        transaction.status === "pending" &&
+        !transaction.paymentMethod &&
+        transaction.contract?.id === contractId,
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime() ||
+        Number(a.amount || 0) - Number(b.amount || 0),
+    )[0];
 
 const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-1", title: "Xác nhận yêu cầu", description: "Yêu cầu đã được tiếp nhận và xác nhận", status: "pending" },
@@ -102,6 +136,10 @@ const EventTracking = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [detailedTasks, setDetailedTasks] = useState<CustomerTask[]>([]);
+  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  const [taskFilter, setTaskFilter] = useState<"all" | "in_progress" | "done" | "todo">("all");
+  const [feedbackPanel, setFeedbackPanel] = useState<FeedbackPanelState | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [paymentForm, setPaymentForm] = useState<PaymentForm>({
     transactionId: "",
@@ -125,18 +163,20 @@ const EventTracking = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const [eventDetail, eventMilestones, chatMessages, docs, txs] = await Promise.all([
+      const [eventDetail, eventMilestones, chatMessages, docs, txs, tasks] = await Promise.all([
         apiClient.get<EventDetail>(`/customer/events/${id}`),
         apiClient.get<Milestone[]>(`/customer/events/${id}/milestones`),
         apiClient.get<Message[]>(`/customer/events/${id}/chat-messages`),
         apiClient.get<DocumentItem[]>("/customer/documents"),
         apiClient.get<Transaction[]>("/customer/transactions"),
+        apiClient.get<CustomerTask[]>(`/customer/events/${id}/tasks`).catch(() => [] as CustomerTask[]),
       ]);
       setEvent(eventDetail);
       setMilestones(eventMilestones);
       setMessages(chatMessages);
       setDocuments(docs.filter(doc => !doc.event || doc.event.id === id));
       setTransactions(txs.filter(tx => !tx.event || tx.event.id === id));
+      setDetailedTasks(tasks);
     } catch (error) {
       toast.error("Không tải được chi tiết sự kiện");
     } finally {
@@ -174,27 +214,44 @@ const EventTracking = () => {
     messagesListRef.current.scrollTop = messagesListRef.current.scrollHeight;
   }, [messages, activeTab]);
 
-  const contractSummaries = useMemo(() => (event?.contracts ?? []).map((contract) => {
-    const completed = (contract.transactions ?? [])
-      .filter((tx) => tx.status === "completed")
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const pending = (contract.transactions ?? [])
-      .filter((tx) => tx.status === "pending" && tx.paymentMethod)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const scheduled = (contract.transactions ?? [])
-      .filter((tx) => tx.status === "pending" && !tx.paymentMethod)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
-    const totalValue = Number(contract.totalValue || 0);
-    return {
-      ...contract,
-      totalValue,
-      completed,
-      pending,
-      scheduled,
-      outstanding: Math.max(totalValue - completed - pending, 0),
-      payable: BILLABLE_CONTRACT_STATUSES.has(contract.status),
-    };
-  }), [event?.contracts]);
+  const openFeedbackPanel = (contract: EventContract, mode: FeedbackPanelState["mode"]) => {
+    const note = contract.rejectionNote?.trim();
+    if (!note) return;
+    setTaskPanelOpen(false);
+    setFeedbackPanel({
+      contractCode: contract.contractCode,
+      note,
+      respondedAt: contract.respondedAt,
+      updatedAt: contract.updatedAt,
+      mode,
+    });
+  };
+
+  const closeFeedbackPanel = () => setFeedbackPanel(null);
+
+  const contractSummaries = useMemo(() => (event?.contracts ?? [])
+    .filter((contract) => BILLABLE_CONTRACT_STATUSES.has(contract.status))
+    .map((contract) => {
+      const completed = (contract.transactions ?? [])
+        .filter((tx) => tx.status === "completed")
+        .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+      const pending = (contract.transactions ?? [])
+        .filter((tx) => tx.status === "pending" && tx.paymentMethod)
+        .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+      const scheduled = (contract.transactions ?? [])
+        .filter((tx) => tx.status === "pending" && !tx.paymentMethod)
+        .reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+      const totalValue = Number(contract.totalValue || 0);
+      return {
+        ...contract,
+        totalValue,
+        completed,
+        pending,
+        scheduled,
+        outstanding: Math.max(totalValue - completed - pending, 0),
+        payable: BILLABLE_CONTRACT_STATUSES.has(contract.status),
+      };
+    }), [event?.contracts]);
 
   const totals = useMemo(() => {
     const paid = transactions
@@ -226,6 +283,16 @@ const EventTracking = () => {
   );
 
   const hasLiquidatedContract = contractSummaries.some((c) => c.status === "liquidated");
+
+  const taskStats = useMemo(() => {
+    const total = detailedTasks.length;
+    const done = detailedTasks.filter((t) => t.status === "done").length;
+    const inProgress = detailedTasks.filter((t) => t.status === "in_progress").length;
+    const review = detailedTasks.filter((t) => t.status === "review").length;
+    const todo = detailedTasks.filter((t) => t.status === "todo").length;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    return { total, done, inProgress, review, todo, percent };
+  }, [detailedTasks]);
 
   const selectedContract = useMemo(
     () => contractSummaries.find((contract) => contract.id === paymentForm.contractId),
@@ -260,12 +327,7 @@ const EventTracking = () => {
       if (!nextContract) {
         return current.contractId ? { ...current, contractId: "" } : current;
       }
-      const scheduledTransaction = transactions.find(
-        (transaction) =>
-          transaction.status === "pending" &&
-          !transaction.paymentMethod &&
-          transaction.contract?.id === nextContract.id,
-      );
+      const scheduledTransaction = getNextScheduledTransaction(transactions, nextContract.id);
       if (current.contractId === nextContract.id && current.transactionId === scheduledTransaction?.id) return current;
 
       return {
@@ -336,12 +398,7 @@ const EventTracking = () => {
 
   const selectPaymentContract = (contractId: string) => {
     const contract = contractSummaries.find((item) => item.id === contractId);
-    const scheduledTransaction = transactions.find(
-      (transaction) =>
-        transaction.status === "pending" &&
-        !transaction.paymentMethod &&
-        transaction.contract?.id === contractId,
-    );
+    const scheduledTransaction = getNextScheduledTransaction(transactions, contractId);
     setPaymentForm((current) => ({
       ...current,
       transactionId: scheduledTransaction?.id ?? "",
@@ -416,8 +473,22 @@ const EventTracking = () => {
 
   const money = (value: number) => value.toLocaleString("vi-VN") + "đ";
 
-  const sentContract = event?.contracts?.find((c) => c.status === "sent");
-  const activeContract = event?.contracts?.find((c) => c.status === "active" || c.status === "liquidated");
+  const latestContract = event?.contracts?.[0];
+  const sentContract = latestContract?.status === "sent" ? latestContract : null;
+  const activeContract = latestContract?.status === "active" || latestContract?.status === "liquidated"
+    ? latestContract
+    : null;
+  const cancelledContract = latestContract?.status === "cancelled" ? latestContract : null;
+  const rejectedContract = sentContract?.rejectionNote ? sentContract : null;
+  const agreementDescription = cancelledContract
+    ? "Hợp đồng đã bị admin hủy và không còn hiệu lực."
+    : activeContract
+      ? "Khách hàng đã đồng ý báo giá và các điều khoản hợp đồng."
+      : rejectedContract
+        ? "Khách hàng đã từ chối hợp đồng và gửi phản hồi."
+        : sentContract
+          ? "Hợp đồng đang chờ khách hàng xem xét và phản hồi."
+          : DEFAULT_MILESTONES[1].description;
 
   const handleContractAccept = async (contractId: string) => {
     if (!confirm("Bạn xác nhận đồng ý với các điều khoản hợp đồng này?")) return;
@@ -529,9 +600,92 @@ const EventTracking = () => {
                           <h3 className="font-serif text-foreground font-semibold">{defaultStep.title}</h3>
                           <span className="font-body text-xs text-muted-foreground">{milestoneDate ? new Date(milestoneDate).toLocaleDateString("vi-VN") : ""}</span>
                         </div>
-                        <p className="font-body text-sm text-muted-foreground">{defaultStep.description}</p>
+                        <p className="font-body text-sm text-muted-foreground">
+                          {i === 1 ? agreementDescription : defaultStep.description}
+                        </p>
 
                         {/* Contract response UI for "Báo giá & Thống nhất" step */}
+                        {i === 1 && cancelledContract && (
+                          <div className="mt-4 rounded-lg border border-destructive/20 bg-destructive/5 p-3 flex items-start gap-2">
+                            <Ban size={16} className="mt-0.5 shrink-0 text-destructive" />
+                            <div className="min-w-0 flex-1">
+                              <div className="sm:flex sm:items-center sm:gap-3">
+                                <div className="min-w-0">
+                                  <p className="font-body text-sm text-destructive font-semibold">Admin đã hủy hợp đồng</p>
+                                  <p className="font-body text-xs text-muted-foreground break-words">{cancelledContract.contractCode}</p>
+                                </div>
+                                {cancelledContract.rejectionNote ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="mt-2 rounded-lg border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive sm:ml-auto sm:mt-0"
+                                    onClick={() => openFeedbackPanel(cancelledContract, "cancelled")}
+                                  >
+                                    <Eye size={14} className="mr-1" /> Xem phản hồi
+                                  </Button>
+                                ) : null}
+                                {cancelledContract.updatedAt && (
+                                  <span className="mt-1 block font-body text-xs text-muted-foreground sm:ml-auto sm:mt-0 sm:shrink-0">
+                                    {new Date(cancelledContract.updatedAt).toLocaleDateString("vi-VN")}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-2 font-body text-xs text-muted-foreground">
+                                Hợp đồng này không còn hiệu lực và đã được loại khỏi các khoản cần thanh toán.
+                              </p>
+                              {cancelledContract.rejectionNote && (
+                                <p className="mt-1 font-body text-xs text-muted-foreground">
+                                  Bấm Xem phản hồi để mở lại nội dung bạn đã gửi.
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {i === 1 && activeContract && (
+                          <div className="mt-4 rounded-lg border border-secondary/20 bg-secondary/5 p-3 flex items-start gap-2">
+                            <CheckCircle size={16} className="mt-0.5 shrink-0 text-secondary" />
+                            <div className="min-w-0 flex-1 sm:flex sm:items-center sm:gap-3">
+                              <div className="min-w-0">
+                                <p className="font-body text-sm text-secondary font-semibold">Đã đồng ý hợp đồng</p>
+                                <p className="font-body text-xs text-muted-foreground break-words">{activeContract.contractCode}</p>
+                              </div>
+                              {activeContract.signedAt && (
+                                <span className="mt-1 block font-body text-xs text-muted-foreground sm:ml-auto sm:mt-0 sm:shrink-0">
+                                  {new Date(activeContract.signedAt).toLocaleDateString("vi-VN")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {i === 1 && rejectedContract && (
+                          <div className="mt-4 rounded-lg border border-destructive/20 bg-destructive/5 p-3 flex items-start gap-2">
+                            <XCircle size={16} className="mt-0.5 shrink-0 text-destructive" />
+                            <div className="min-w-0 flex-1">
+                              <div className="sm:flex sm:items-center sm:gap-3">
+                                <div className="min-w-0">
+                                  <p className="font-body text-sm text-destructive font-semibold">Đã từ chối hợp đồng</p>
+                                  <p className="font-body text-xs text-muted-foreground break-words">{rejectedContract.contractCode}</p>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="mt-2 rounded-lg border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive sm:ml-auto sm:mt-0"
+                                  onClick={() => openFeedbackPanel(rejectedContract, "rejected")}
+                                >
+                                  <Eye size={14} className="mr-1" /> Xem phản hồi
+                                </Button>
+                                {rejectedContract.respondedAt && (
+                                  <span className="mt-1 block font-body text-xs text-muted-foreground sm:ml-auto sm:mt-0 sm:shrink-0">
+                                    {new Date(rejectedContract.respondedAt).toLocaleDateString("vi-VN")}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-2 font-body text-xs text-muted-foreground">
+                                Phản hồi đã được gửi. Vui lòng chờ hợp đồng được cập nhật.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                         {i === 1 && sentContract && (
                           <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
                             <div className="flex items-center gap-2">
@@ -543,16 +697,6 @@ const EventTracking = () => {
                                 · {money(Number(sentContract.totalValue || 0))}
                               </span>
                             </div>
-                            {sentContract.rejectionNote && (
-                              <div className="rounded-md bg-destructive/10 p-2">
-                                <p className="font-body text-xs text-destructive">
-                                  Bạn đã từ chối trước đó: "{sentContract.rejectionNote}"
-                                </p>
-                                <p className="font-body text-xs text-muted-foreground mt-1">
-                                  Hợp đồng đã được cập nhật, vui lòng xem lại.
-                                </p>
-                              </div>
-                            )}
                             <div className="flex flex-wrap gap-2">
                               <Link to={`/dashboard/hop-dong/${sentContract.id}`}>
                                 <Button variant="outline" size="sm" className="rounded-lg">
@@ -567,29 +711,75 @@ const EventTracking = () => {
                                 disabled={contractResponding}
                               >
                                 <CheckCircle size={14} className="mr-1" />
-                                {contractResponding ? "Đang xử lý..." : "Đồng ý"}
+                                {contractResponding ? "Đang xử lý..." : sentContract.rejectionNote ? "Đồng ý lại" : "Đồng ý"}
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="rounded-lg text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/5"
-                                onClick={() => { setRejectDialogOpen(sentContract.id); setRejectionNote(""); }}
+                                onClick={() => {
+                                  setRejectDialogOpen(sentContract.id);
+                                  setRejectionNote(sentContract.rejectionNote ?? "");
+                                }}
                                 disabled={contractResponding}
                               >
-                                Từ chối
+                                <XCircle size={14} className="mr-1" />
+                                {sentContract.rejectionNote ? "Sửa lý do" : "Từ chối"}
                               </Button>
                             </div>
                           </div>
                         )}
-                        {i === 1 && activeContract && !sentContract && (
-                          <div className="mt-4 rounded-lg border border-secondary/20 bg-secondary/5 p-3 flex items-center gap-2">
-                            <CheckCircle size={16} className="text-secondary" />
-                            <span className="font-body text-sm text-secondary font-semibold">Đã đồng ý hợp đồng</span>
-                            {activeContract.signedAt && (
-                              <span className="font-body text-xs text-muted-foreground ml-auto">
-                                {new Date(activeContract.signedAt).toLocaleDateString("vi-VN")}
-                              </span>
-                            )}
+
+                        {/* Compact summary + button for "Lên kế hoạch chi tiết" step */}
+                        {i === 3 && detailedTasks.length > 0 && (
+                          <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <ListChecks size={16} className="text-primary shrink-0" />
+                                  <span className="font-body text-sm font-semibold text-foreground">
+                                    {taskStats.done}/{taskStats.total} công việc hoàn thành
+                                  </span>
+                                </div>
+                                <Progress value={taskStats.percent} className="h-1.5 mb-2" />
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 font-body text-xs">
+                                  {taskStats.inProgress > 0 && (
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                      <span className="text-muted-foreground">{taskStats.inProgress} đang làm</span>
+                                    </span>
+                                  )}
+                                  {taskStats.review > 0 && (
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                      <span className="text-muted-foreground">{taskStats.review} kiểm tra</span>
+                                    </span>
+                                  )}
+                                  {taskStats.todo > 0 && (
+                                    <span className="flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                                      <span className="text-muted-foreground">{taskStats.todo} chờ xử lý</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <Button
+                                variant="hero"
+                                size="sm"
+                                className="rounded-lg shrink-0"
+                                onClick={() => { setFeedbackPanel(null); setTaskFilter("all"); setTaskPanelOpen(true); }}
+                              >
+                                Xem chi tiết <ChevronRight size={14} className="ml-0.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                        {i === 3 && detailedTasks.length === 0 && (status === "completed" || status === "in_progress") && (
+                          <div className="mt-4 rounded-lg border border-border bg-surface-low p-3">
+                            <p className="font-body text-xs text-muted-foreground flex items-center gap-2">
+                              <ListChecks size={14} />
+                              Chưa có kế hoạch chi tiết cho sự kiện này.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -937,6 +1127,283 @@ const EventTracking = () => {
           </motion.div>
         )}
       </div>
+
+      {/* Task detail slide-over panel */}
+      <AnimatePresence>
+        {taskPanelOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+              onClick={() => setTaskPanelOpen(false)}
+            />
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-lg bg-background shadow-2xl flex flex-col"
+            >
+              {/* Panel header */}
+              <div className="shrink-0 px-6 py-5 border-b border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg gradient-primary flex items-center justify-center">
+                      <ListChecks size={18} className="text-primary-foreground" />
+                    </div>
+                    <div>
+                      <h2 className="font-serif text-headline-md text-foreground">Kế hoạch chi tiết</h2>
+                      <p className="font-body text-xs text-muted-foreground mt-0.5">{taskStats.done}/{taskStats.total} công việc · {taskStats.percent}% hoàn thành</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setTaskPanelOpen(false)}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-surface-low transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <Progress value={taskStats.percent} className="h-1.5 mb-4" />
+
+                {/* Stats row */}
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  <div className="rounded-lg bg-secondary/10 p-2 text-center">
+                    <p className="font-serif text-headline-sm text-secondary">{taskStats.done}</p>
+                    <p className="font-body text-[10px] text-secondary/80">Hoàn thành</p>
+                  </div>
+                  <div className="rounded-lg bg-primary/10 p-2 text-center">
+                    <p className="font-serif text-headline-sm text-primary">{taskStats.inProgress}</p>
+                    <p className="font-body text-[10px] text-primary/80">Đang làm</p>
+                  </div>
+                  <div className="rounded-lg bg-amber-500/10 p-2 text-center">
+                    <p className="font-serif text-headline-sm text-amber-600">{taskStats.review}</p>
+                    <p className="font-body text-[10px] text-amber-600/80">Kiểm tra</p>
+                  </div>
+                  <div className="rounded-lg bg-surface-low p-2 text-center">
+                    <p className="font-serif text-headline-sm text-muted-foreground">{taskStats.todo}</p>
+                    <p className="font-body text-[10px] text-muted-foreground">Chờ xử lý</p>
+                  </div>
+                </div>
+
+                {/* Filter tabs */}
+                <div className="flex gap-1.5">
+                  {([
+                    { key: "all" as const, label: "Tất cả", count: taskStats.total },
+                    { key: "in_progress" as const, label: "Đang làm", count: taskStats.inProgress + taskStats.review },
+                    { key: "todo" as const, label: "Chờ xử lý", count: taskStats.todo },
+                    { key: "done" as const, label: "Hoàn thành", count: taskStats.done },
+                  ]).map((tab) => (
+                    <button
+                      key={tab.key}
+                      onClick={() => setTaskFilter(tab.key)}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg font-body text-xs transition-all ${
+                        taskFilter === tab.key
+                          ? "gradient-primary text-primary-foreground font-semibold"
+                          : "bg-surface-low text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {tab.label}
+                      <span className={`text-[10px] ${taskFilter === tab.key ? "text-primary-foreground/70" : "text-muted-foreground"}`}>({tab.count})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Panel body — scrollable task list */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+                {(() => {
+                  const now = new Date();
+                  const filteredTasks = detailedTasks.filter((task) => {
+                    if (taskFilter === "all") return true;
+                    if (taskFilter === "in_progress") return task.status === "in_progress" || task.status === "review";
+                    return task.status === taskFilter;
+                  });
+
+                  if (filteredTasks.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <Filter size={32} className="text-muted-foreground/30 mb-3" />
+                        <p className="font-body text-sm text-muted-foreground">Không có công việc nào trong bộ lọc này.</p>
+                      </div>
+                    );
+                  }
+
+                  const taskStatusConfig: Record<string, { label: string; class: string; dotClass: string }> = {
+                    done: { label: "Hoàn thành", class: "bg-secondary/10 text-secondary", dotClass: "bg-secondary" },
+                    in_progress: { label: "Đang làm", class: "bg-primary/10 text-primary", dotClass: "bg-primary" },
+                    review: { label: "Kiểm tra", class: "bg-amber-500/10 text-amber-600", dotClass: "bg-amber-500" },
+                    todo: { label: "Chờ xử lý", class: "bg-muted text-muted-foreground", dotClass: "bg-muted-foreground/40" },
+                  };
+                  const priorityConfig: Record<string, { label: string; class: string }> = {
+                    high: { label: "Ưu tiên cao", class: "bg-destructive/10 text-destructive" },
+                    medium: { label: "Trung bình", class: "bg-primary/10 text-primary" },
+                    low: { label: "Thấp", class: "bg-muted text-muted-foreground" },
+                  };
+
+                  return filteredTasks.map((task) => {
+                    const statusCfg = taskStatusConfig[task.status] ?? taskStatusConfig.todo;
+                    const priorityCfg = priorityConfig[task.priority] ?? priorityConfig.medium;
+                    const isDone = task.status === "done";
+                    const isOverdue = !isDone && task.dueAt && new Date(task.dueAt) < now;
+
+                    return (
+                      <motion.div
+                        key={task.id}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`group rounded-xl border p-4 transition-all hover:shadow-md ${
+                          isOverdue
+                            ? "border-destructive/25 bg-destructive/5"
+                            : isDone
+                              ? "border-secondary/15 bg-secondary/5"
+                              : "border-border bg-surface-lowest hover:border-primary/20"
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`mt-0.5 shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${
+                            isDone
+                              ? "bg-secondary text-secondary-foreground"
+                              : isOverdue
+                                ? "bg-destructive/20 text-destructive"
+                                : "bg-surface-high text-muted-foreground"
+                          }`}>
+                            {isDone ? <CheckCircle size={14} /> : isOverdue ? <AlertTriangle size={14} /> : <Circle size={14} />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className={`font-body text-sm font-semibold leading-snug ${
+                              isDone ? "text-muted-foreground line-through" : "text-foreground"
+                            }`}>
+                              {task.title}
+                            </p>
+                            {task.description && (
+                              <p className="font-body text-xs text-muted-foreground mt-1 line-clamp-2 leading-relaxed">
+                                {task.description}
+                              </p>
+                            )}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold font-body ${statusCfg.class}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${statusCfg.dotClass}`} />
+                                {statusCfg.label}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold font-body ${priorityCfg.class}`}>
+                                {priorityCfg.label}
+                              </span>
+                              {task.dueAt && (
+                                <span className={`inline-flex items-center gap-1 font-body text-[11px] ${
+                                  isOverdue ? "text-destructive font-semibold" : "text-muted-foreground"
+                                }`}>
+                                  <Clock size={11} />
+                                  {new Date(task.dueAt).toLocaleDateString("vi-VN")}
+                                  {isOverdue && " · Quá hạn"}
+                                </span>
+                              )}
+                              {isDone && task.completedAt && (
+                                <span className="font-body text-[11px] text-secondary flex items-center gap-1">
+                                  <CheckCircle size={11} />
+                                  {new Date(task.completedAt).toLocaleDateString("vi-VN")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Panel footer */}
+              <div className="shrink-0 px-6 py-4 border-t border-border bg-surface-lowest">
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl"
+                  onClick={() => setTaskPanelOpen(false)}
+                >
+                  Đóng
+                </Button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {feedbackPanel && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+              onClick={closeFeedbackPanel}
+            />
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md bg-background shadow-2xl flex flex-col"
+            >
+              <div className="shrink-0 px-6 py-5 border-b border-border">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${feedbackPanel.mode === "cancelled" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"}`}>
+                      <MessageSquare size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="font-serif text-headline-md text-foreground">Phản hồi của bạn</h2>
+                      <p className="font-body text-xs text-muted-foreground mt-0.5 break-words">{feedbackPanel.contractCode}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={closeFeedbackPanel}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-surface-low transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className={`inline-flex rounded-full px-3 py-1 font-body text-xs font-semibold ${feedbackPanel.mode === "cancelled" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"}`}>
+                  {feedbackPanel.mode === "cancelled" ? "Hợp đồng đã hủy" : "Đã từ chối hợp đồng"}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                <div className="rounded-xl border border-border bg-surface-lowest p-4">
+                  <p className="font-body text-xs font-semibold uppercase tracking-wide text-muted-foreground">Nội dung</p>
+                  <p className="mt-2 whitespace-pre-wrap font-body text-sm leading-relaxed text-foreground">{feedbackPanel.note}</p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl bg-surface-low p-4">
+                    <p className="font-body text-xs text-muted-foreground">Loại phản hồi</p>
+                    <p className="mt-1 font-body text-sm font-semibold text-foreground">
+                      {feedbackPanel.mode === "cancelled" ? "Đã gửi trước khi hủy" : "Đã gửi khi từ chối"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-surface-low p-4">
+                    <p className="font-body text-xs text-muted-foreground">Thời gian</p>
+                    <p className="mt-1 font-body text-sm font-semibold text-foreground">
+                      {feedbackPanel.respondedAt
+                        ? new Date(feedbackPanel.respondedAt).toLocaleDateString("vi-VN")
+                        : feedbackPanel.updatedAt
+                          ? new Date(feedbackPanel.updatedAt).toLocaleDateString("vi-VN")
+                          : "-"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="shrink-0 px-6 py-4 border-t border-border bg-surface-lowest">
+                <Button variant="outline" className="w-full rounded-xl" onClick={closeFeedbackPanel}>
+                  Đóng
+                </Button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Rejection dialog */}
       {rejectDialogOpen && (

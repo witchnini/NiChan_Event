@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
+  Ban,
   Calculator,
   ClipboardCheck,
   ClipboardList,
@@ -161,6 +162,25 @@ type ContractForm = {
   paymentTerms: string;
   generalTerms: string;
   lineItems: LineItemForm[];
+};
+
+type LineItemEditorOptions = {
+  items: LineItemForm[];
+  total: number;
+  totalLabel: string;
+  unitPriceLabel: string;
+  descriptionPlaceholder: string;
+  onUpdate: (index: number, patch: Partial<LineItemForm>) => void;
+  onCategoryChange: (index: number, category: string) => void;
+  onApplyTemplate: (index: number, templateId: string) => void;
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+  onApplySuggested: () => void;
+  onImportBudget: () => void;
+  applySuggestedDisabled: boolean;
+  importBudgetDisabled: boolean;
+  importBudgetLabel: string;
+  helperText: string;
 };
 
 const statusList = [
@@ -977,6 +997,18 @@ const emptyLineItem = (): LineItemForm => ({
   note: "",
 });
 
+const settlementLineItemsFromPreview = (preview: SettlementPreview): LineItemForm[] =>
+  preview.lineItems.length > 0
+    ? preview.lineItems.map((item) => ({
+        category: item.category ?? "",
+        description: String(item.description ?? ""),
+        unit: String(item.unit ?? "gói"),
+        quantity: String(item.quantity ?? 1),
+        unitPrice: String(item.unitPrice ?? 0),
+        note: String(item.note ?? ""),
+      }))
+    : [emptyLineItem()];
+
 const emptyForm = (): ContractForm => ({
   eventId: "",
   customerUserId: "",
@@ -1066,10 +1098,11 @@ const AdminContracts = () => {
         editItem?.event?.type,
         editItem?.event?.consultationRequest?.eventType,
         editItem?.event?.consultationRequest?.note,
+        settlementPreview?.eventName,
       ]
         .filter(Boolean)
         .join(" "),
-    [editItem, selectedProject],
+    [editItem, selectedProject, settlementPreview],
   );
 
   const inferredService = useMemo(
@@ -1365,23 +1398,30 @@ const AdminContracts = () => {
     toast.success(`Đã áp dụng điều khoản mẫu ${selectedTermsTemplate.label}`);
   };
 
-  const normalizedLineItems = () =>
-    form.lineItems.map((item) => ({
-      category: item.category.trim(),
-      description: item.description.trim() || null,
-      unit: item.unit.trim() || null,
-      quantity: toNumber(item.quantity),
-      unitPrice: toNumber(item.unitPrice),
-      note: item.note.trim() || null,
-    }));
+  const normalizedLineItems = (items = form.lineItems) =>
+    items
+      .map((item) => ({
+        category: item.category.trim(),
+        description: item.description.trim() || null,
+        unit: item.unit.trim() || null,
+        quantity: toNumber(item.quantity),
+        unitPrice: toNumber(item.unitPrice),
+        note: item.note.trim() || null,
+      }))
+      .filter((item) => item.category && item.quantity > 0 && item.unitPrice > 0);
 
-  const validateForm = () => {
+  const validateForm = (mode: "create" | "edit") => {
     if (!form.eventId || !form.customerUserId) {
       toast.error("Vui lòng chọn dự án/sự kiện");
       return false;
     }
 
-    if (toNumber(form.totalValue) <= 0 && quoteTotal <= 0) {
+    if (mode === "create" && toNumber(form.totalValue) <= 0) {
+      toast.error("Tổng giá trị hợp đồng phải lớn hơn 0");
+      return false;
+    }
+
+    if (mode === "edit" && (quoteTotal <= 0 || normalizedLineItems().length === 0)) {
       toast.error("Tổng giá trị hợp đồng phải lớn hơn 0");
       return false;
     }
@@ -1395,7 +1435,7 @@ const AdminContracts = () => {
   };
 
   const handleCreate = async () => {
-    if (!validateForm()) return;
+    if (!validateForm("create")) return;
 
     setSaving(true);
     try {
@@ -1459,7 +1499,7 @@ const AdminContracts = () => {
   };
 
   const handleEdit = async () => {
-    if (!editItem || !validateForm()) return;
+    if (!editItem || !validateForm("edit")) return;
 
     setSaving(true);
     try {
@@ -1502,35 +1542,38 @@ const AdminContracts = () => {
   };
 
   const handleSend = async (contract: Contract) => {
+    const isResend = contract.status === "sent" && !!contract.rejectionNote;
+    if (isResend && !confirm(`Khách hàng đã từ chối hợp đồng ${contract.contractCode}. Bạn muốn gửi lại?`)) return;
     try {
       await apiClient.patch(`/admin/contracts/${contract.id}/send`);
-      toast.success(`Đã gửi hợp đồng ${contract.contractCode}`);
+      toast.success(isResend ? `Đã gửi lại hợp đồng ${contract.contractCode}` : `Đã gửi hợp đồng ${contract.contractCode}`);
       await loadContracts();
     } catch (error) {
-      toast.error("Chỉ có thể gửi hợp đồng ở trạng thái bản nháp");
+      toast.error(error instanceof Error ? error.message : "Gửi hợp đồng thất bại");
+    }
+  };
+
+  const handleCancel = async (contract: Contract) => {
+    if (!confirm(`Bạn chắc chắn muốn hủy hợp đồng ${contract.contractCode}? Các phiếu thanh toán chờ xử lý sẽ bị hủy theo.`)) return;
+    try {
+      await apiClient.patch(`/admin/contracts/${contract.id}/cancel`);
+      toast.success(`Đã hủy hợp đồng ${contract.contractCode}`);
+      await loadContracts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Hủy hợp đồng thất bại");
     }
   };
 
   const openSettlementPreview = async (contract: Contract) => {
     setSettlementLoading(true);
+    setSelectedServiceId(AUTO_SERVICE_VALUE);
+    void loadServices();
     try {
       const preview = await apiClient.get<SettlementPreview>(
         `/admin/contracts/${contract.id}/settlement-preview`,
       );
       setSettlementPreview(preview);
-      // Pre-fill editable line items from budget data
-      setSettlementLineItems(
-        preview.lineItems.length > 0
-          ? preview.lineItems.map((item) => ({
-              category: item.category ?? "",
-              description: String(item.description ?? ""),
-              unit: String(item.unit ?? "Trọn gói"),
-              quantity: String(item.quantity ?? 1),
-              unitPrice: String(item.unitPrice ?? 0),
-              note: String(item.note ?? ""),
-            }))
-          : [emptyLineItem()],
-      );
+      setSettlementLineItems(settlementLineItemsFromPreview(preview));
     } catch (error) {
       toast.error("Không tải được dữ liệu quyết toán. Hãy kiểm tra budget đã có chi phí thực tế chưa.");
     } finally {
@@ -1547,6 +1590,75 @@ const AdminContracts = () => {
     setSettlementLineItems((items) =>
       items.map((item, i) => (i === index ? { ...item, ...patch } : item)),
     );
+  };
+
+  const updateSettlementItemCategory = (index: number, category: string) => {
+    setSettlementLineItems((items) =>
+      items.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        const matchedTemplate = findLineItemTemplateByCategory(lineItemTemplateOptions, category);
+        const suggestedUnit = suggestUnitForCategory(category);
+        const shouldAutoUpdateUnit = !item.unit || item.unit === "gói" || item.unit === suggestUnitForCategory(item.category);
+        const descriptionLooksAuto =
+          !item.description.trim() ||
+          lineItemTemplateOptions.some(
+            (template) => normalizeText(template.description) === normalizeText(item.description),
+          );
+        return {
+          ...item,
+          category,
+          description: matchedTemplate && descriptionLooksAuto ? matchedTemplate.description : item.description,
+          unit: shouldAutoUpdateUnit ? matchedTemplate?.unit ?? suggestedUnit : item.unit,
+        };
+      }),
+    );
+  };
+
+  const applySettlementLineItemTemplate = (index: number, templateId: string) => {
+    if (templateId === MANUAL_TEMPLATE_VALUE) return;
+
+    const template = lineItemTemplateOptions.find((item) => item.id === templateId);
+    if (!template) return;
+
+    setSettlementLineItems((items) =>
+      items.map((item, itemIndex) =>
+        itemIndex === index ? lineItemFromTemplate(template, item) : item,
+      ),
+    );
+  };
+
+  const addSettlementLineItem = () => {
+    setSettlementLineItems((items) => [...items, emptyLineItem()]);
+  };
+
+  const removeSettlementLineItem = (index: number) => {
+    setSettlementLineItems((items) =>
+      items.length === 1 ? [emptyLineItem()] : items.filter((_, itemIndex) => itemIndex !== index),
+    );
+  };
+
+  const applySuggestedSettlementLineItems = () => {
+    const templates = lineItemTemplateOptions.length > 0
+      ? lineItemTemplateOptions
+      : commonLineItemTemplates;
+
+    setSettlementLineItems((items) =>
+      appendLineItems(
+        items,
+        templates.map((template) => lineItemFromTemplate(template)),
+      ),
+    );
+    toast.success(`Đã thêm ${templates.length} hạng mục quyết toán cho ${lineItemContextLabel}`);
+  };
+
+  const importBudgetAsSettlement = () => {
+    if (!settlementPreview || settlementPreview.budgetItemCount === 0) {
+      toast.error("Chưa có hạng mục ngân sách thực tế để nhập");
+      return;
+    }
+
+    setSettlementLineItems(settlementLineItemsFromPreview(settlementPreview));
+    toast.success("Đã nhập hạng mục quyết toán từ ngân sách thực tế");
   };
 
   const handleCreateSettlement = async () => {
@@ -1581,7 +1693,24 @@ const AdminContracts = () => {
     }
   };
 
-  const renderLineItemEditor = () => (
+  const renderLineItemEditor = ({
+    items,
+    total,
+    totalLabel,
+    unitPriceLabel,
+    descriptionPlaceholder,
+    onUpdate,
+    onCategoryChange,
+    onApplyTemplate,
+    onAdd,
+    onRemove,
+    onApplySuggested,
+    onImportBudget,
+    applySuggestedDisabled,
+    importBudgetDisabled,
+    importBudgetLabel,
+    helperText,
+  }: LineItemEditorOptions) => (
     <div className="space-y-3">
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-low p-3 lg:flex-row lg:items-end">
         <div className="w-full lg:w-72">
@@ -1615,8 +1744,8 @@ const AdminContracts = () => {
         <Button
           type="button"
           variant="outline"
-          onClick={applySuggestedLineItems}
-          disabled={!form.eventId && !selectedService && !selectedServiceCategory}
+          onClick={onApplySuggested}
+          disabled={applySuggestedDisabled}
           className="rounded-lg"
         >
           <ClipboardList size={16} /> Áp dụng hạng mục
@@ -1624,16 +1753,14 @@ const AdminContracts = () => {
         <Button
           type="button"
           variant="outline"
-          onClick={importBudgetAsQuote}
-          disabled={budgetLoading || !form.eventId}
+          onClick={onImportBudget}
+          disabled={importBudgetDisabled}
           className="rounded-lg"
         >
-          <Calculator size={16} /> {budgetLoading ? "Đang tải..." : "Nhập từ ngân sách"}
+          <Calculator size={16} /> {importBudgetLabel}
         </Button>
         <p className="font-body text-xs text-muted-foreground">
-          {servicesLoading
-            ? "Đang tải dịch vụ..."
-            : `${lineItemTemplateOptions.length} hạng mục mẫu · ${budgetItems.length > 0 ? `${budgetItems.length} hạng mục ngân sách` : "chưa có ngân sách"}`}
+          {helperText}
         </p>
       </div>
 
@@ -1645,25 +1772,25 @@ const AdminContracts = () => {
               <th className="w-[420px] px-3 py-2 text-left font-body font-semibold">Mô tả</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">SL</th>
               <th className="w-24 px-3 py-2 text-left font-body font-semibold">Đơn vị</th>
-              <th className="w-36 px-3 py-2 text-left font-body font-semibold">Đơn giá bán</th>
+              <th className="w-36 px-3 py-2 text-left font-body font-semibold">{unitPriceLabel}</th>
               <th className="w-36 px-3 py-2 text-right font-body font-semibold">Thành tiền</th>
               <th className="w-12 px-2 py-2" />
             </tr>
           </thead>
           <tbody>
-            {form.lineItems.map((item, index) => (
+            {items.map((item, index) => (
               <tr key={index} className="border-t border-border">
                 <td className="px-3 py-2 align-top">
                   <div className="space-y-2">
                     <Input
                       value={item.category}
-                      onChange={(event) => updateLineItemCategory(index, event.target.value)}
+                      onChange={(event) => onCategoryChange(index, event.target.value)}
                       placeholder="Nhập tên hạng mục"
                       className="h-9 rounded-lg border-none bg-surface-lowest font-body font-medium text-foreground"
                     />
                     <Select
                       value={selectedLineItemTemplateValue(item)}
-                      onValueChange={(value) => applyLineItemTemplate(index, value)}
+                      onValueChange={(value) => onApplyTemplate(index, value)}
                     >
                       <SelectTrigger className="h-7 rounded-lg border border-border bg-background px-2 font-body text-xs text-muted-foreground hover:text-foreground">
                         <span className="flex min-w-0 items-center gap-1">
@@ -1685,8 +1812,8 @@ const AdminContracts = () => {
                 <td className="px-3 py-2 align-top">
                   <Textarea
                     value={item.description}
-                    onChange={(event) => updateLineItem(index, { description: event.target.value })}
-                    placeholder="Mô tả gửi khách"
+                    onChange={(event) => onUpdate(index, { description: event.target.value })}
+                    placeholder={descriptionPlaceholder}
                     rows={3}
                     className="min-h-[78px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed text-foreground"
                   />
@@ -1697,12 +1824,12 @@ const AdminContracts = () => {
                     min={0}
                     step="0.01"
                     value={item.quantity}
-                    onChange={(event) => updateLineItem(index, { quantity: event.target.value })}
+                    onChange={(event) => onUpdate(index, { quantity: event.target.value })}
                     className="h-9 rounded-lg border-none bg-surface-lowest font-body"
                   />
                 </td>
                 <td className="px-3 py-2 align-top">
-                  <Select value={item.unit || "gói"} onValueChange={(value) => updateLineItem(index, { unit: value })}>
+                  <Select value={item.unit || "gói"} onValueChange={(value) => onUpdate(index, { unit: value })}>
                     <SelectTrigger className="h-9 rounded-lg border-none bg-surface-lowest font-body">
                       <SelectValue />
                     </SelectTrigger>
@@ -1718,7 +1845,7 @@ const AdminContracts = () => {
                     type="number"
                     min={0}
                     value={item.unitPrice}
-                    onChange={(event) => updateLineItem(index, { unitPrice: event.target.value })}
+                    onChange={(event) => onUpdate(index, { unitPrice: event.target.value })}
                     className="h-9 rounded-lg border-none bg-surface-lowest font-body"
                   />
                 </td>
@@ -1731,7 +1858,7 @@ const AdminContracts = () => {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 rounded-lg text-destructive"
-                    onClick={() => removeLineItem(index)}
+                    onClick={() => onRemove(index)}
                   >
                     <Trash2 size={14} />
                   </Button>
@@ -1743,12 +1870,12 @@ const AdminContracts = () => {
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Button type="button" variant="outline" size="sm" onClick={addLineItem} className="rounded-lg">
+        <Button type="button" variant="outline" size="sm" onClick={onAdd} className="rounded-lg">
           <Plus size={14} /> Thêm hạng mục
         </Button>
         <div className="text-right font-body">
-          <p className="text-xs text-muted-foreground">Tổng giá trị báo khách</p>
-          <p className="text-lg font-bold text-foreground">{money(quoteTotal)}</p>
+          <p className="text-xs text-muted-foreground">{totalLabel}</p>
+          <p className="text-lg font-bold text-foreground">{money(total)}</p>
         </div>
       </div>
     </div>
@@ -1809,7 +1936,26 @@ const AdminContracts = () => {
       ) : (
         <div>
           <label className="mb-1 block font-body text-sm text-foreground">Bảng báo giá *</label>
-          {renderLineItemEditor()}
+          {renderLineItemEditor({
+            items: form.lineItems,
+            total: quoteTotal,
+            totalLabel: "Tổng giá trị báo khách",
+            unitPriceLabel: "Đơn giá bán",
+            descriptionPlaceholder: "Mô tả gửi khách",
+            onUpdate: updateLineItem,
+            onCategoryChange: updateLineItemCategory,
+            onApplyTemplate: applyLineItemTemplate,
+            onAdd: addLineItem,
+            onRemove: removeLineItem,
+            onApplySuggested: applySuggestedLineItems,
+            onImportBudget: importBudgetAsQuote,
+            applySuggestedDisabled: !form.eventId && !selectedService && !selectedServiceCategory,
+            importBudgetDisabled: budgetLoading || !form.eventId,
+            importBudgetLabel: budgetLoading ? "Đang tải..." : "Nhập từ ngân sách",
+            helperText: servicesLoading
+              ? "Đang tải dịch vụ..."
+              : `${lineItemTemplateOptions.length} hạng mục mẫu · ${budgetItems.length > 0 ? `${budgetItems.length} hạng mục ngân sách` : "chưa có ngân sách"}`,
+          })}
         </div>
       )}
 
@@ -2011,6 +2157,17 @@ const AdminContracts = () => {
                         <Send size={14} />
                       </Button>
                     )}
+                    {contract.status === "sent" && contract.rejectionNote && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-amber-500 hover:text-amber-600"
+                        onClick={() => handleSend(contract)}
+                        title="Gửi lại hợp đồng"
+                      >
+                        <Send size={14} />
+                      </Button>
+                    )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg">
@@ -2032,6 +2189,22 @@ const AdminContracts = () => {
                             <Send size={12} className="mr-2" /> Gửi khách hàng
                           </DropdownMenuItem>
                         )}
+                        {contract.status === "sent" && contract.rejectionNote && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <div className="px-2 py-1.5">
+                              <p className="font-body text-xs font-semibold text-destructive mb-1">Phản hồi từ KH:</p>
+                              <p className="font-body text-xs text-muted-foreground italic">"{contract.rejectionNote}"</p>
+                            </div>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => openEdit(contract)}>
+                              <Edit2 size={12} className="mr-2" /> Sửa & gửi lại
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleSend(contract)}>
+                              <Send size={12} className="mr-2" /> Gửi lại ngay
+                            </DropdownMenuItem>
+                          </>
+                        )}
                         {(contract.status === "active" || contract.status === "sent") && (
                           <DropdownMenuItem onClick={() => openSettlementPreview(contract)}>
                             <ClipboardCheck size={12} className="mr-2" /> Tạo biên bản quyết toán
@@ -2041,6 +2214,14 @@ const AdminContracts = () => {
                           <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}?view=settlement`)}>
                             <ClipboardCheck size={12} className="mr-2" /> Xem biên bản quyết toán
                           </DropdownMenuItem>
+                        )}
+                        {(contract.status === "draft" || contract.status === "sent") && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => handleCancel(contract)} className="text-destructive">
+                              <Ban size={12} className="mr-2" /> Hủy hợp đồng
+                            </DropdownMenuItem>
+                          </>
                         )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={() => handleDelete(contract.id)} className="text-destructive">
@@ -2134,6 +2315,18 @@ const AdminContracts = () => {
                   <p className="text-foreground">{viewItem.createdBy?.displayName ?? "-"}</p>
                 </div>
               </div>
+
+              {viewItem.rejectionNote && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+                  <p className="font-body text-xs font-semibold text-destructive mb-1">⚠ Phản hồi từ khách hàng:</p>
+                  <p className="font-body text-sm text-foreground italic">"{viewItem.rejectionNote}"</p>
+                  {viewItem.respondedAt && (
+                    <p className="font-body text-xs text-muted-foreground mt-2">
+                      Ngày phản hồi: {new Date(viewItem.respondedAt).toLocaleDateString("vi-VN")}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {latestLineItems.length > 0 && (
                 <div className="border-t border-border pt-3">
@@ -2229,7 +2422,7 @@ const AdminContracts = () => {
 
       {/* Settlement editable dialog */}
       <Dialog open={!!settlementPreview} onOpenChange={() => { setSettlementPreview(null); setSettlementLineItems([]); }}>
-        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[900px]">
+        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
           <DialogHeader>
             <DialogTitle className="font-serif">Tạo biên bản quyết toán</DialogTitle>
           </DialogHeader>
@@ -2264,102 +2457,28 @@ const AdminContracts = () => {
                 </div>
               </div>
 
-              {/* Editable line items */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="font-body text-sm font-semibold text-foreground">Chi tiết hạng mục quyết toán</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSettlementLineItems((items) => [...items, emptyLineItem()])}
-                  >
-                    <Plus size={14} className="mr-1" /> Thêm
-                  </Button>
-                </div>
-
-                <div className="space-y-2">
-                  {settlementLineItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className="rounded-lg border border-border bg-surface-low p-3 space-y-2"
-                    >
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1 space-y-2">
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <div>
-                              <label className="font-body text-xs text-muted-foreground">Hạng mục *</label>
-                              <Input
-                                value={item.category}
-                                onChange={(e) => updateSettlementItem(index, { category: e.target.value })}
-                                placeholder="Tên hạng mục"
-                                className="mt-1 bg-surface-lowest font-body text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="font-body text-xs text-muted-foreground">Mô tả / NCC</label>
-                              <Input
-                                value={item.description}
-                                onChange={(e) => updateSettlementItem(index, { description: e.target.value })}
-                                placeholder="Mô tả hoặc nhà cung cấp"
-                                className="mt-1 bg-surface-lowest font-body text-sm"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div>
-                              <label className="font-body text-xs text-muted-foreground">Số lượng</label>
-                              <Input
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => updateSettlementItem(index, { quantity: e.target.value })}
-                                min={1}
-                                className="mt-1 bg-surface-lowest font-body text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="font-body text-xs text-muted-foreground">Đơn vị</label>
-                              <Input
-                                value={item.unit}
-                                onChange={(e) => updateSettlementItem(index, { unit: e.target.value })}
-                                placeholder="gói"
-                                className="mt-1 bg-surface-lowest font-body text-sm"
-                              />
-                            </div>
-                            <div>
-                              <label className="font-body text-xs text-muted-foreground">Đơn giá *</label>
-                              <Input
-                                type="number"
-                                value={item.unitPrice}
-                                onChange={(e) => updateSettlementItem(index, { unitPrice: e.target.value })}
-                                min={0}
-                                className="mt-1 bg-surface-lowest font-body text-sm"
-                              />
-                            </div>
-                          </div>
-                          {toNumber(item.quantity) > 0 && toNumber(item.unitPrice) > 0 && (
-                            <p className="font-body text-xs text-muted-foreground text-right">
-                              Thành tiền: <span className="font-semibold text-foreground">{money(toNumber(item.quantity) * toNumber(item.unitPrice))}</span>
-                            </p>
-                          )}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive shrink-0 mt-4"
-                          onClick={() => setSettlementLineItems((items) => items.filter((_, i) => i !== index))}
-                          disabled={settlementLineItems.length <= 1}
-                        >
-                          <Trash2 size={14} />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-center justify-between">
-                  <span className="font-body text-sm font-semibold text-primary">Tổng cộng</span>
-                  <span className="font-serif text-headline-md text-primary">{money(settlementTotal)}</span>
-                </div>
+                <p className="font-body text-sm font-semibold text-foreground">Chi tiết hạng mục quyết toán</p>
+                {renderLineItemEditor({
+                  items: settlementLineItems,
+                  total: settlementTotal,
+                  totalLabel: "Tổng giá trị quyết toán",
+                  unitPriceLabel: "Đơn giá quyết toán",
+                  descriptionPlaceholder: "Mô tả hoặc nhà cung cấp",
+                  onUpdate: updateSettlementItem,
+                  onCategoryChange: updateSettlementItemCategory,
+                  onApplyTemplate: applySettlementLineItemTemplate,
+                  onAdd: addSettlementLineItem,
+                  onRemove: removeSettlementLineItem,
+                  onApplySuggested: applySuggestedSettlementLineItems,
+                  onImportBudget: importBudgetAsSettlement,
+                  applySuggestedDisabled: !selectedService && !selectedServiceCategory && lineItemTemplateOptions.length === 0,
+                  importBudgetDisabled: !settlementPreview || settlementPreview.budgetItemCount === 0,
+                  importBudgetLabel: "Nhập từ ngân sách",
+                  helperText: servicesLoading
+                    ? "Đang tải dịch vụ..."
+                    : `${lineItemTemplateOptions.length} hạng mục mẫu · ${settlementPreview.budgetItemCount > 0 ? `${settlementPreview.budgetItemCount} hạng mục ngân sách thực tế` : "chưa có ngân sách thực tế"}`,
+                })}
               </div>
 
               <div className="rounded-lg bg-surface-low p-3 font-body text-xs text-muted-foreground">

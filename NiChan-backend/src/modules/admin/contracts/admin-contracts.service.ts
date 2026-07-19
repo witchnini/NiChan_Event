@@ -350,8 +350,8 @@ export const sendContract = async (id: string, sentById: string) => {
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
-  if (existing.status !== "draft")
-    throw createError("CONFLICT", "Only draft contracts can be sent", 409);
+  if (existing.status !== "draft" && existing.status !== "sent")
+    throw createError("CONFLICT", "Only draft or sent contracts can be sent", 409);
 
   const documentUrl = existing.versions[0]?.documentUrl ?? "";
 
@@ -359,7 +359,7 @@ export const sendContract = async (id: string, sentById: string) => {
     const sentAt = new Date();
     const contract = await tx.contract.update({
       where: { id },
-      data: { status: "sent", sentAt },
+      data: { status: "sent", sentAt, rejectionNote: null, respondedAt: null },
     });
 
     await ensureContractPaymentSchedule(tx, {
@@ -604,5 +604,41 @@ export const deleteContract = async (id: string) => {
     await tx.contractVersion.deleteMany({ where: { contractId: id } });
     await tx.notification.deleteMany({ where: { entityType: "contract", entityId: id } });
     await tx.contract.delete({ where: { id } });
+  });
+};
+
+export const cancelContract = async (id: string, cancelledById: string) => {
+  const existing = await prisma.contract.findUnique({
+    where: { id },
+    include: { event: { select: { id: true, name: true } } },
+  });
+  if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
+  if (existing.status === "cancelled")
+    throw createError("CONFLICT", "Contract is already cancelled", 409);
+  if (existing.status === "liquidated")
+    throw createError("CONFLICT", "Cannot cancel a liquidated contract", 409);
+
+  return prisma.$transaction(async (tx) => {
+    const contract = await tx.contract.update({
+      where: { id },
+      data: { status: "cancelled" },
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: existing.eventId,
+        actorUserId: cancelledById,
+        iconName: "x-circle",
+        message: `Đã hủy hợp đồng ${existing.contractCode}.`,
+      },
+    });
+
+    // Cancel pending transactions
+    await tx.transaction.updateMany({
+      where: { contractId: id, status: "pending" },
+      data: { status: "cancelled" },
+    });
+
+    return contract;
   });
 };

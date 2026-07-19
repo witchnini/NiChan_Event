@@ -12,6 +12,7 @@ import {
   getCustomerDocuments,
   getCustomerEventById,
   getCustomerEvents,
+  getCustomerEventTasks,
   getCustomerNotifications,
   getCustomerReviews,
   getCustomerTransactions,
@@ -70,6 +71,12 @@ customerRouter.get("/events/:eventId", async (req: Request, res: Response) => {
 // GET /api/customer/events/:eventId/milestones
 customerRouter.get("/events/:eventId/milestones", async (req: Request, res: Response) => {
   const data = await getEventMilestones(p(req, "eventId"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/customer/events/:eventId/tasks
+customerRouter.get("/events/:eventId/tasks", async (req: Request, res: Response) => {
+  const data = await getCustomerEventTasks(p(req, "eventId"), req.user!.userId);
   sendSuccess(res, { data });
 });
 

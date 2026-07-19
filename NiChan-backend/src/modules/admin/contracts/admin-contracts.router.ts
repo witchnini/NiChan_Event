@@ -6,6 +6,7 @@ import { p, q } from "../../../utils/request";
 import { sendSuccess } from "../../../utils/response";
 import { createContractSchema, createSettlementSchema, updateContractSchema } from "./admin-contracts.schema";
 import {
+  cancelContract,
   createContract,
   createSettlementVersion,
   deleteContract,
@@ -83,6 +84,12 @@ adminContractsRouter.post(
     sendSuccess(res, { data });
   },
 );
+
+// PATCH /api/admin/contracts/:id/cancel
+adminContractsRouter.patch("/:id/cancel", async (req: Request, res: Response) => {
+  const data = await cancelContract(p(req, "id"), req.user!.userId);
+  sendSuccess(res, { data });
+});
 
 // DELETE /api/admin/contracts/:id
 adminContractsRouter.delete("/:id", async (req: Request, res: Response) => {

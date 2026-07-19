@@ -221,10 +221,12 @@ const ContractDocument = forwardRef<HTMLDivElement, ContractDocumentProps>(({ co
   const originalTotal = originalVersion
     ? originalVersion.lineItems?.reduce((sum, li) => sum + (Number(li.amount) || Number(li.quantity) * Number(li.unitPrice)), 0) ?? 0
     : 0;
-  const settlementTotal = lineItems.reduce(
+  const lineItemsTotal = lineItems.reduce(
     (sum, li) => sum + (Number(li.amount) || Number(li.quantity) * Number(li.unitPrice)),
     0,
   );
+  const settlementTotal = lineItemsTotal;
+  const originalContractTotal = lineItems.length > 0 ? lineItemsTotal : numberValue(contract.totalValue);
 
   if (isSettlement) {
     return (
@@ -373,13 +375,20 @@ const ContractDocument = forwardRef<HTMLDivElement, ContractDocumentProps>(({ co
 
       <Clause index={2} title="Giá trị hợp đồng và phương thức thanh toán">
         <p>
-          Tổng giá trị hợp đồng: <span className="font-bold">{money(contract.totalValue)}</span>
+          Tổng giá trị hợp đồng: <span className="font-bold">{money(originalContractTotal)}</span>
         </p>
-        <p className="italic">(Bằng chữ: {numberToVietnameseWords(Number(contract.totalValue))})</p>
-        <p className="mt-2">
-          Giá trị trên là mức giá thỏa thuận giữa hai bên cho toàn bộ dịch vụ tổ chức sự kiện.
-          Chi tiết các hạng mục và chi phí thực tế sẽ được quyết toán trong biên bản nghiệm thu sau khi sự kiện hoàn thành.
-        </p>
+        <p className="italic">(Bằng chữ: {numberToVietnameseWords(originalContractTotal)})</p>
+        {lineItems.length > 0 ? (
+          <>
+            <p className="mt-3 font-semibold">Bảng báo giá dịch vụ:</p>
+            <QuotationTable items={lineItems} totalValue={originalContractTotal} />
+          </>
+        ) : (
+          <p className="mt-2">
+            Giá trị trên là mức giá thỏa thuận giữa hai bên cho toàn bộ dịch vụ tổ chức sự kiện.
+            Chi tiết các hạng mục và chi phí thực tế sẽ được quyết toán trong biên bản nghiệm thu sau khi sự kiện hoàn thành.
+          </p>
+        )}
         <p className="mt-3 font-semibold">Điều khoản thanh toán:</p>
         <p>{version?.paymentTerms || "Theo thỏa thuận giữa hai bên."}</p>
       </Clause>
