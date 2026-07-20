@@ -209,6 +209,9 @@ const statusColors: Record<string, string> = {
   cancelled: "bg-destructive/10 text-destructive",
 };
 
+const hasCustomerFeedback = (contract?: Pick<Contract, "rejectionNote"> | null) =>
+  Boolean(contract?.rejectionNote?.trim());
+
 const unitOptions = [
   "gói",
   "buổi",
@@ -2112,12 +2115,16 @@ const AdminContracts = () => {
                     <span className={`rounded-full px-3 py-1 font-body text-xs font-semibold ${statusColors[contract.status] ?? "bg-muted text-muted-foreground"}`}>
                       {statusLabel[contract.status] ?? contract.status}
                     </span>
-                    {contract.status === "sent" && contract.rejectionNote && (
+                    {hasCustomerFeedback(contract) && (
                       <span
                         className="rounded-full bg-destructive/10 px-2 py-0.5 font-body text-[10px] font-semibold text-destructive cursor-help"
-                        title={`KH từ chối: ${contract.rejectionNote}`}
+                        title={
+                          contract.status === "cancelled"
+                            ? `Phản hồi KH trước khi hủy: ${contract.rejectionNote}`
+                            : `KH từ chối: ${contract.rejectionNote}`
+                        }
                       >
-                        KH từ chối
+                        {contract.status === "cancelled" ? "Có phản hồi KH" : "KH từ chối"}
                       </span>
                     )}
                     {contract.status === "active" && contract.respondedAt && (
@@ -2189,7 +2196,7 @@ const AdminContracts = () => {
                             <Send size={12} className="mr-2" /> Gửi khách hàng
                           </DropdownMenuItem>
                         )}
-                        {contract.status === "sent" && contract.rejectionNote && (
+                        {contract.status === "sent" && hasCustomerFeedback(contract) && (
                           <>
                             <DropdownMenuSeparator />
                             <div className="px-2 py-1.5">
@@ -2318,7 +2325,9 @@ const AdminContracts = () => {
 
               {viewItem.rejectionNote && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-                  <p className="font-body text-xs font-semibold text-destructive mb-1">⚠ Phản hồi từ khách hàng:</p>
+                  <p className="font-body text-xs font-semibold text-destructive mb-1">
+                    {viewItem.status === "cancelled" ? "Phản hồi từ khách hàng trước khi hủy:" : "Phản hồi từ khách hàng:"}
+                  </p>
                   <p className="font-body text-sm text-foreground italic">"{viewItem.rejectionNote}"</p>
                   {viewItem.respondedAt && (
                     <p className="font-body text-xs text-muted-foreground mt-2">

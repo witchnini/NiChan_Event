@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useLocation, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Download, FileText, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, Download, FileText, ClipboardCheck, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
@@ -9,6 +9,11 @@ import { exportContractPdf } from "@/lib/contractPdf";
 import { useAuth } from "@/contexts/AuthContext";
 
 type VersionPurpose = "original" | "settlement";
+type ContractWithFeedback = FullContract & {
+  respondedAt?: string | null;
+  rejectionNote?: string | null;
+  updatedAt?: string | null;
+};
 
 const ContractView = () => {
   const { id } = useParams();
@@ -16,7 +21,7 @@ const ContractView = () => {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const docRef = useRef<HTMLDivElement>(null);
-  const [contract, setContract] = useState<FullContract | null>(null);
+  const [contract, setContract] = useState<ContractWithFeedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [viewPurpose, setViewPurpose] = useState<VersionPurpose>(
@@ -42,7 +47,7 @@ const ContractView = () => {
             : user.role === "organizer"
               ? `/organizer/contracts/${id}`
               : `/customer/contracts/${id}`;
-        const data = await apiClient.get<FullContract>(path);
+        const data = await apiClient.get<ContractWithFeedback>(path);
         setContract(data);
 
         // Auto-select settlement view if URL param says so, or if only settlement exists
@@ -65,6 +70,7 @@ const ContractView = () => {
   const hasSettlement = contract?.versions?.some((v) => v.purpose === "settlement") ?? false;
   const hasOriginal = contract?.versions?.some((v) => (v.purpose ?? "original") === "original") ?? false;
   const showToggle = hasSettlement && hasOriginal;
+  const adminFeedbackNote = user?.role === "admin" ? contract?.rejectionNote?.trim() : "";
 
   const handleSavePdf = async () => {
     if (!docRef.current || !contract) return;
@@ -114,6 +120,31 @@ const ContractView = () => {
               >
                 <ClipboardCheck size={16} /> Biên bản quyết toán
               </button>
+            </div>
+          </div>
+        )}
+
+        {adminFeedbackNote && contract && (
+          <div className="mb-6 max-w-[820px] mx-auto rounded-xl border border-destructive/20 bg-destructive/5 p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+                <MessageSquare size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="font-body text-sm font-semibold text-destructive">
+                    {contract.status === "cancelled" ? "Phản hồi từ khách hàng trước khi hủy" : "Phản hồi từ khách hàng"}
+                  </p>
+                  {(contract.respondedAt || contract.updatedAt) && (
+                    <span className="font-body text-xs text-muted-foreground">
+                      {new Date(contract.respondedAt ?? contract.updatedAt ?? "").toLocaleDateString("vi-VN")}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 whitespace-pre-wrap break-words font-body text-sm leading-relaxed text-foreground">
+                  {adminFeedbackNote}
+                </p>
+              </div>
             </div>
           </div>
         )}
