@@ -149,6 +149,9 @@ const EventTracking = () => {
     note: "",
   });
   const [activeTab, setActiveTab] = useState<"timeline" | "chat" | "documents" | "payment" | "settlement">("timeline");
+  const [unreadChat, setUnreadChat] = useState(0);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   const [loading, setLoading] = useState(true);
   const [attaching, setAttaching] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -197,7 +200,14 @@ const EventTracking = () => {
 
   // Thêm tin nhắn vào danh sách, tránh trùng theo id (socket có thể gửi lại tin của chính mình)
   const appendMessage = (message: Message) => {
-    setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === message.id)) return prev;
+      // Chỉ đếm unread khi KHÔNG ở tab chat và tin nhắn không phải của mình
+      if (message.senderUserId !== user?.userId && activeTabRef.current !== "chat") {
+        setUnreadChat((count) => count + 1);
+      }
+      return [...prev, message];
+    });
   };
 
   // Xóa tin nhắn khỏi danh sách (real-time)
@@ -552,9 +562,14 @@ const EventTracking = () => {
             { key: "payment" as const, label: "Thanh toán", icon: CreditCard },
             { key: "settlement" as const, label: "Nghiệm thu", icon: ClipboardCheck },
           ].map(tab => (
-            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-body text-sm whitespace-nowrap transition-all ${activeTab === tab.key ? "gradient-primary text-primary-foreground" : "bg-surface-lowest text-muted-foreground hover:text-foreground"}`}>
+            <button key={tab.key} onClick={() => { setActiveTab(tab.key); if (tab.key === "chat") setUnreadChat(0); }}
+              className={`relative flex items-center gap-2 px-5 py-2.5 rounded-xl font-body text-sm whitespace-nowrap transition-all ${activeTab === tab.key ? "gradient-primary text-primary-foreground" : "bg-surface-lowest text-muted-foreground hover:text-foreground"}`}>
               <tab.icon size={16} /> {tab.label}
+              {tab.key === "chat" && unreadChat > 0 && activeTab !== "chat" && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[11px] flex items-center justify-center font-bold animate-pulse">
+                  {unreadChat > 99 ? "99+" : unreadChat}
+                </span>
+              )}
             </button>
           ))}
         </div>

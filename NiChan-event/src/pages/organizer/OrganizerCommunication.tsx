@@ -55,6 +55,15 @@ const OrganizerCommunication = () => {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"chat" | "documents">("chat");
 
+  // Theo dõi tin nhắn chưa đọc theo từng project (local, không phụ thuộc hook global)
+  const [unreadByProject, setUnreadByProject] = useState<Record<string, number>>({});
+
+  // Refs để appendMessage đọc giá trị mới nhất mà không cần re-subscribe
+  const selectedProjectIdRef = useRef(selectedProjectId);
+  selectedProjectIdRef.current = selectedProjectId;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [newMessage, setNewMessage] = useState("");
@@ -131,7 +140,19 @@ const OrganizerCommunication = () => {
 
   // Thêm tin nhắn vào danh sách, tránh trùng theo id (socket có thể gửi lại tin của chính mình)
   const appendMessage = (message: Message) => {
-    setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+    setMessages((prev) => {
+      if (prev.some((m) => m.id === message.id)) return prev;
+      // Chỉ đếm unread khi tin nhắn không phải của mình VÀ project đó không đang được xem ở tab chat
+      const isViewingThisChat =
+        message.eventId === selectedProjectIdRef.current && tabRef.current === "chat";
+      if (message.senderUserId !== user?.userId && !isViewingThisChat) {
+        setUnreadByProject((counts) => ({
+          ...counts,
+          [message.eventId]: (counts[message.eventId] ?? 0) + 1,
+        }));
+      }
+      return [...prev, message];
+    });
   };
 
   // Xóa tin nhắn khỏi danh sách (real-time)
@@ -279,8 +300,11 @@ const OrganizerCommunication = () => {
             {filteredProjects.map((project) => (
               <button
                 key={project.id}
-                onClick={() => setSelectedProjectId(project.id)}
-                className={`w-full text-left bg-surface-lowest rounded-xl p-4 shadow-ambient transition-all ${
+                onClick={() => {
+                  setSelectedProjectId(project.id);
+                  if (tab === "chat") setUnreadByProject((c) => { const n = { ...c }; delete n[project.id]; return n; });
+                }}
+                className={`w-full text-left bg-surface-lowest rounded-xl p-4 shadow-ambient transition-all relative ${
                   selectedProjectId === project.id ? "ring-2 ring-primary" : "hover:bg-surface-low"
                 }`}
               >
@@ -293,6 +317,11 @@ const OrganizerCommunication = () => {
                 <div className="mt-3 flex items-center gap-2 font-body text-xs text-muted-foreground">
                   <Calendar size={12} /> {project.type} · {project.guestCount ?? 0} khách
                 </div>
+                {(unreadByProject[project.id] ?? 0) > 0 && (
+                  <span className="absolute top-3 right-3 min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[11px] flex items-center justify-center font-bold animate-pulse">
+                    {unreadByProject[project.id] > 99 ? "99+" : unreadByProject[project.id]}
+                  </span>
+                )}
               </button>
             ))}
 
@@ -316,7 +345,7 @@ const OrganizerCommunication = () => {
               </div>
             </div>
             <div className="flex p-1 rounded-xl bg-surface-low">
-              <button onClick={() => setTab("chat")} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg font-body text-sm transition-all ${tab === "chat" ? "bg-background shadow-ambient text-foreground font-semibold" : "text-muted-foreground"}`}>
+              <button onClick={() => { setTab("chat"); setUnreadByProject((c) => { const n = { ...c }; delete n[selectedProjectId]; return n; }); }} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg font-body text-sm transition-all ${tab === "chat" ? "bg-background shadow-ambient text-foreground font-semibold" : "text-muted-foreground"}`}>
                 <MessageSquare size={14} /> Trao đổi
               </button>
               <button onClick={() => setTab("documents")} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg font-body text-sm transition-all ${tab === "documents" ? "bg-background shadow-ambient text-foreground font-semibold" : "text-muted-foreground"}`}>

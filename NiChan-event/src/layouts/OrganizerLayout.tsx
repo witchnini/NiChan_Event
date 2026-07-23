@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
+import { useChatNotification } from "@/hooks/useChatNotification";
 
 const sidebarItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/ban-to-chuc" },
@@ -57,6 +58,15 @@ const OrganizerLayout = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [profile, setProfile] = useState<OrganizerProfileResponse | null>(null);
   const location = useLocation();
+
+  // Lắng nghe tin nhắn chat mới — hiện toast + browser notification + âm thanh
+  const { totalUnread: unreadChatCount, clearAll: clearChatUnread } = useChatNotification();
+
+  // Tự động xóa badge khi user đang ở trang trao đổi
+  const isOnChatPage = location.pathname.startsWith("/ban-to-chuc/trao-doi");
+  useEffect(() => {
+    if (isOnChatPage) clearChatUnread();
+  }, [isOnChatPage, clearChatUnread]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,15 +161,25 @@ const OrganizerLayout = () => {
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         {sidebarItems.map((item) => {
           const isActive = location.pathname === item.path || (item.path !== "/ban-to-chuc" && location.pathname.startsWith(item.path));
+          const chatBadge = item.path === "/ban-to-chuc/trao-doi" && unreadChatCount > 0;
           return (
             <Link
               key={item.path}
               to={item.path}
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl font-body text-sm transition-all ${isActive ? "bg-secondary text-secondary-foreground font-semibold shadow-ambient" : "text-muted-foreground hover:text-foreground hover:bg-surface-low"}`}
+              onClick={() => { setMobileOpen(false); if (item.path === "/ban-to-chuc/trao-doi") clearChatUnread(); }}
+              className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl font-body text-sm transition-all ${isActive ? "bg-secondary text-secondary-foreground font-semibold shadow-ambient" : "text-muted-foreground hover:text-foreground hover:bg-surface-low"}`}
             >
               <item.icon size={18} />
               {!collapsed && <span>{item.label}</span>}
+              {chatBadge && !isOnChatPage && (
+                collapsed ? (
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-destructive animate-pulse" />
+                ) : (
+                  <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-destructive text-destructive-foreground text-[11px] flex items-center justify-center font-bold">
+                    {unreadChatCount > 99 ? "99+" : unreadChatCount}
+                  </span>
+                )
+              )}
             </Link>
           );
         })}

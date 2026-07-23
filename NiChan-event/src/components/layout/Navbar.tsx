@@ -8,6 +8,7 @@ import { getServiceCategories, type PublicServiceCategory } from "@/services/api
 import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { toast } from "sonner";
+import { useChatNotification } from "@/hooks/useChatNotification";
 
 const navLinks = [
   { label: "Trang chủ", path: "/" },
@@ -73,6 +74,8 @@ const Navbar = () => {
 
   const links = isCustomerRoute ? customerLinks : navLinks;
   const isCustomerUser = currentRole === "customer";
+  // Lắng nghe tin nhắn chat mới — hiện toast + browser notification + âm thanh
+  useChatNotification();
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => !notification.isRead),
     [notifications],
