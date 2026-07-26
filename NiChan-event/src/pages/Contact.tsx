@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Send, Phone, Mail, MapPin, ArrowRight, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,12 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 const eventTypes = ["Tiệc cưới", "Khai trương", "Gala Dinner", "Hội nghị", "Road Show", "Kỷ niệm", "Online Event", "Khác"];
 const budgetRanges = ["Dưới 50 triệu", "50 - 100 triệu", "100 - 300 triệu", "300 - 500 triệu", "Trên 500 triệu"];
 
 const Contact = () => {
+  const { user, isAuthenticated } = useAuth();
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
     name: "", email: "", phone: "", company: "",
@@ -21,6 +23,49 @@ const Contact = () => {
   const [submitted, setSubmitted] = useState(false);
   const [submittedCode, setSubmittedCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== "customer") return;
+
+    // Fill immediately from the authenticated session, then enrich with the
+    // latest customer profile (notably the phone number).
+    setFormData((prev) => ({
+      ...prev,
+      name: prev.name || user.displayName || "",
+      email: prev.email || user.email || "",
+    }));
+
+    let cancelled = false;
+
+    const prefillContactInformation = async () => {
+      try {
+        const profile = await apiClient.get<{
+          fullName?: string | null;
+          displayName?: string | null;
+          email?: string | null;
+          phone?: string | null;
+        }>("/customer/profile");
+
+        if (cancelled) return;
+
+        setFormData((prev) => ({
+          ...prev,
+          name: prev.name || profile.fullName || profile.displayName || user.displayName || "",
+          email: prev.email || profile.email || user.email || "",
+          phone: prev.phone || profile.phone || "",
+        }));
+      } catch {
+        // Session data already prefills name/email; keep the form usable if
+        // loading the optional profile details fails.
+      }
+    };
+
+    void prefillContactInformation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, user]);
 
   const updateField = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));

@@ -38,6 +38,7 @@ import CustomerProfile from "@/pages/customer/CustomerProfile";
 import EventTracking from "@/pages/customer/EventTracking";
 import MyContracts from "@/pages/customer/MyContracts";
 import MyEvents from "@/pages/customer/MyEvents";
+import RequestTracking from "@/pages/customer/RequestTracking";
 import ReviewRating from "@/pages/customer/ReviewRating";
 import OrganizerBudget from "@/pages/organizer/OrganizerBudget";
 import OrganizerCommunication from "@/pages/organizer/OrganizerCommunication";
@@ -133,6 +134,7 @@ export const AppRoutes = () => (
 
     <Route path="/dashboard" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><CustomerDashboard /></PublicLayout></ProtectedRoute>} />
     <Route path="/dashboard/su-kien" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><MyEvents /></PublicLayout></ProtectedRoute>} />
+    <Route path="/dashboard/yeu-cau/:id" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><RequestTracking /></PublicLayout></ProtectedRoute>} />
     <Route path="/dashboard/su-kien/:id" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><EventTracking /></PublicLayout></ProtectedRoute>} />
     <Route path="/dashboard/hop-dong" element={<ProtectedRoute allowedRoles={["customer", "admin"]}><PublicLayout><MyContracts /></PublicLayout></ProtectedRoute>} />
     <Route path="/dashboard/hop-dong/:id" element={<ProtectedRoute allowedRoles={["customer", "admin", "organizer"]}><PublicLayout><ContractView /></PublicLayout></ProtectedRoute>} />

@@ -261,7 +261,9 @@ const getManagedEvent = async (projectId: string, actor: ActorContext) => {
   const event = await prisma.event.findFirst({
     where: {
       id: projectId,
-      ...(actor.role === "admin" ? {} : { organizerUserId: actor.userId }),
+      ...(actor.role === "admin"
+        ? {}
+        : { organizerUserId: actor.userId, organizerAssignmentStatus: "accepted" }),
     },
     select: {
       id: true,
@@ -281,7 +283,9 @@ const getManagedBudget = async (projectBudgetId: string, actor: ActorContext) =>
   const budget = await prisma.projectBudget.findFirst({
     where: {
       id: projectBudgetId,
-      ...(actor.role === "admin" ? {} : { event: { organizerUserId: actor.userId } }),
+      ...(actor.role === "admin"
+        ? {}
+        : { event: { organizerUserId: actor.userId, organizerAssignmentStatus: "accepted" } }),
     },
     select: { id: true, eventId: true },
   });
@@ -296,7 +300,14 @@ const getManagedBudgetItem = async (id: string, actor: ActorContext) => {
       id,
       ...(actor.role === "admin"
         ? {}
-        : { projectBudget: { event: { organizerUserId: actor.userId } } }),
+        : {
+            projectBudget: {
+              event: {
+                organizerUserId: actor.userId,
+                organizerAssignmentStatus: "accepted",
+              },
+            },
+          }),
     },
     include: { projectBudget: { select: { eventId: true } } },
   });

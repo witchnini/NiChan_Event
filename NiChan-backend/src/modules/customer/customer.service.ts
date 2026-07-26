@@ -187,7 +187,56 @@ export const getCustomerDashboard = async (customerUserId: string) => {
     select: { id: true, message: true, iconName: true, createdAt: true },
   });
 
-  return { events, recentActivities, contracts, transactions };
+  const requests = await getCustomerRequests(customerUserId);
+  return { events, requests: requests.slice(0, 5), recentActivities, contracts, transactions };
+};
+
+export const getCustomerRequests = async (customerUserId: string) => {
+  return prisma.consultationRequest.findMany({
+    where: { customerUserId },
+    select: {
+      id: true,
+      requestCode: true,
+      customerName: true,
+      eventType: true,
+      eventDate: true,
+      guestCount: true,
+      budgetRange: true,
+      locationText: true,
+      note: true,
+      status: true,
+      quotedAt: true,
+      confirmedAt: true,
+      rejectedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      assignedManager: {
+        select: { id: true, displayName: true, avatarUrl: true },
+      },
+      events: {
+        take: 1,
+        select: { id: true, name: true, status: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+};
+
+export const getCustomerRequestById = async (requestId: string, customerUserId: string) => {
+  const request = await prisma.consultationRequest.findFirst({
+    where: { id: requestId, customerUserId },
+    include: {
+      assignedManager: {
+        select: { id: true, displayName: true, avatarUrl: true },
+      },
+      events: {
+        take: 1,
+        select: { id: true, name: true, status: true },
+      },
+    },
+  });
+  if (!request) throw createError("NOT_FOUND", "Request not found", 404);
+  return request;
 };
 
 export const getCustomerNotifications = async (
@@ -353,7 +402,10 @@ const ensureEventAccess = async (eventId: string, userId: string) => {
   const event = await prisma.event.findFirst({
     where: {
       id: eventId,
-      OR: [{ customerUserId: userId }, { organizerUserId: userId }],
+      OR: [
+        { customerUserId: userId },
+        { organizerUserId: userId, organizerAssignmentStatus: "accepted" },
+      ],
     },
     select: { id: true },
   });
@@ -1065,4 +1117,152 @@ export const getCustomerDocuments = async (customerUserId: string) => {
     include: { event: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" },
   });
+};
+
+// ─── Settlement Feedback (customer view) ────────────────────────────────────────
+
+export const getSettlementFeedback = async (contractId: string, customerUserId: string) => {
+  // Verify contract belongs to this customer
+  const contract = await prisma.contract.findFirst({
+    where: { id: contractId, customerUserId },
+    select: { id: true },
+  });
+  if (!contract) throw createError("NOT_FOUND", "Hợp đồng không tồn tại hoặc không thuộc về bạn.", 404);
+
+  return prisma.settlementFeedback.findMany({
+    where: { contractId, customerId: customerUserId },
+    select: {
+      id: true,
+      contractLineItemId: true,
+      status: true,
+      feedbackNote: true,
+      updatedAt: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+};
+
+const settlementFeedbackItemSchema = z.object({
+  lineItemId: z.string().uuid(),
+  status: z.enum(["agreed", "feedback"]),
+  note: z.string().optional(),
+});
+
+const settlementFeedbackBodySchema = z.object({
+  items: z.array(settlementFeedbackItemSchema).min(1, "Cần ít nhất một hạng mục để nghiệm thu."),
+});
+
+export const submitSettlementFeedback = async (
+  contractId: string,
+  customerUserId: string,
+  body: unknown,
+) => {
+  const parsed = settlementFeedbackBodySchema.parse(body);
+
+  // Verify contract belongs to this customer and is in a reviewable state
+  const contract = await prisma.contract.findFirst({
+    where: {
+      id: contractId,
+      customerUserId,
+      status: { in: ["active", "liquidated"] },
+    },
+    select: {
+      id: true,
+      contractCode: true,
+      eventId: true,
+      event: { select: { organizerUserId: true } },
+    },
+  });
+  if (!contract) throw createError("NOT_FOUND", "Hợp đồng không hợp lệ hoặc chưa sẵn sàng nghiệm thu.", 404);
+
+  // Verify all lineItemIds belong to this contract's versions
+  const validLineItemIds = await prisma.contractLineItem.findMany({
+    where: {
+      contractVersion: { contractId },
+      id: { in: parsed.items.map((i) => i.lineItemId) },
+    },
+    select: { id: true },
+  });
+  const validIds = new Set(validLineItemIds.map((i) => i.id));
+  const invalidItems = parsed.items.filter((i) => !validIds.has(i.lineItemId));
+  if (invalidItems.length > 0) {
+    throw createError("VALIDATION_ERROR", "Một số hạng mục không thuộc hợp đồng này.", 400);
+  }
+
+  // Upsert all feedbacks in a transaction
+  const result = await prisma.$transaction(async (tx: Tx) => {
+    const feedbacks = await Promise.all(
+      parsed.items.map((item) =>
+        tx.settlementFeedback.upsert({
+          where: {
+            contractLineItemId_customerId: {
+              contractLineItemId: item.lineItemId,
+              customerId: customerUserId,
+            },
+          },
+          create: {
+            contractLineItemId: item.lineItemId,
+            contractId,
+            customerId: customerUserId,
+            status: item.status,
+            feedbackNote: item.status === "feedback" ? (item.note?.trim() || null) : null,
+          },
+          update: {
+            status: item.status,
+            feedbackNote: item.status === "feedback" ? (item.note?.trim() || null) : null,
+          },
+        }),
+      ),
+    );
+
+    // Notify admin/organizer about the feedback
+    const feedbackCount = parsed.items.filter((i) => i.status === "feedback").length;
+    const agreedCount = parsed.items.filter((i) => i.status === "agreed").length;
+    const message = feedbackCount > 0
+      ? `Khách hàng đã nghiệm thu ${contract.contractCode}: ${agreedCount} đồng ý, ${feedbackCount} cần xem lại.`
+      : `Khách hàng đã đồng ý tất cả ${agreedCount} hạng mục trong ${contract.contractCode}.`;
+
+    const notifyUserIds = new Set<string>();
+    if (contract.event?.organizerUserId) notifyUserIds.add(contract.event.organizerUserId);
+
+    // Also notify admins
+    const admins = await tx.user.findMany({
+      where: { role: "admin", status: "active" },
+      select: { id: true },
+    });
+    for (const admin of admins) notifyUserIds.add(admin.id);
+
+    const notifications = await Promise.all(
+      [...notifyUserIds].map((userId) =>
+        tx.notification.create({
+          data: {
+            userId,
+            scope: "admin",
+            type: "settlement_feedback",
+            title: "Nghiệm thu hạng mục",
+            message,
+            entityType: "contract",
+            entityId: contractId,
+          },
+        }),
+      ),
+    );
+
+    return { feedbacks, notifications };
+  });
+
+  // Emit real-time notifications
+  for (const notification of result.notifications) {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
+    });
+  }
+
+  return result.feedbacks;
 };

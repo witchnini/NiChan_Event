@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/services/apiClient";
+import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import {
@@ -54,6 +55,9 @@ type Project = {
   guestCount?: number | null;
   locationText?: string | null;
   progressPercent: number;
+  organizerAssignmentStatus?: "pending" | "accepted" | "rejected" | null;
+  organizerRejectionReason?: string | null;
+  organizerRespondedAt?: string | null;
   customerUser: {
     id: string;
     displayName: string;
@@ -75,6 +79,25 @@ type Project = {
     vendors?: number;
     staffAssignments?: number;
   };
+};
+
+type OrganizerRequestAssignment = {
+  id: string;
+  requestCode: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  eventType: string;
+  eventDate?: string | null;
+  guestCount?: number | null;
+  budgetRange?: string | null;
+  locationText?: string | null;
+  note?: string | null;
+  status: string;
+  organizerRequestStatus?: "pending" | "accepted" | "rejected" | null;
+  organizerRequestRejectionReason?: string | null;
+  organizerRequestRespondedAt?: string | null;
+  createdAt: string;
 };
 
 type ProjectDetail = Project & {
@@ -576,6 +599,7 @@ const OrganizerProjects = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [requestAssignments, setRequestAssignments] = useState<OrganizerRequestAssignment[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [projectStaff, setProjectStaff] = useState<ProjectStaffAssignment[]>([]);
   const [vendors, setVendors] = useState<VendorOption[]>([]);
@@ -613,6 +637,10 @@ const OrganizerProjects = () => {
   const [staffSearch, setStaffSearch] = useState("");
   const [createStaffForm, setCreateStaffForm] = useState(emptyCreateStaffForm);
   const [createStaffSaving, setCreateStaffSaving] = useState(false);
+  const [respondingAssignmentId, setRespondingAssignmentId] = useState<string | null>(null);
+  const [rejectionProject, setRejectionProject] = useState<Project | null>(null);
+  const [rejectionRequest, setRejectionRequest] = useState<OrganizerRequestAssignment | null>(null);
+  const [rejectionReason, setRejectionReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [contextLoading, setContextLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -629,6 +657,19 @@ const OrganizerProjects = () => {
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
+  const acceptedProjects = useMemo(
+    () => projects.filter((project) => project.organizerAssignmentStatus === "accepted"),
+    [projects],
+  );
+  const pendingRequestAssignments = useMemo(
+    () => requestAssignments.filter((request) => request.organizerRequestStatus === "pending"),
+    [requestAssignments],
+  );
+  const pendingProjectAssignments = useMemo(
+    () => projects.filter((project) => project.organizerAssignmentStatus === "pending"),
+    [projects],
+  );
+  const pendingAssignmentCount = pendingRequestAssignments.length + pendingProjectAssignments.length;
   const activeProject = projectDetail ?? selectedProject;
   const activeProjectDisplayName = activeProject ? getProjectDisplayName(activeProject) : kanban?.project.name ?? "";
   const activeProjectCustomerName = activeProject
@@ -730,7 +771,7 @@ const OrganizerProjects = () => {
 
   const filteredProjects = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    return projects.filter((project) => {
+    return acceptedProjects.filter((project) => {
       const matchesStatus = filterStatus === "all" || project.status === filterStatus;
       const matchesSearch =
         !keyword ||
@@ -742,7 +783,7 @@ const OrganizerProjects = () => {
         getProjectCustomerName(project).toLowerCase().includes(keyword);
       return matchesStatus && matchesSearch;
     });
-  }, [filterStatus, projects, search]);
+  }, [acceptedProjects, filterStatus, search]);
 
   const allColumns = useMemo(() => kanban?.columns ?? [], [kanban]);
   const allTasks = useMemo(() => allColumns.flatMap((column) => column.tasks), [allColumns]);
@@ -880,11 +921,11 @@ const OrganizerProjects = () => {
   }, [allTasks, kanban?.project.eventDate]);
 
   const stats = useMemo(() => {
-    const active = projects.filter((project) => !["completed", "cancelled"].includes(project.status)).length;
-    const running = projects.filter((project) => project.status === "in_progress").length;
-    const completed = projects.filter((project) => project.status === "completed").length;
-    const avgProgress = projects.length
-      ? Math.round(projects.reduce((sum, project) => sum + project.progressPercent, 0) / projects.length)
+    const active = acceptedProjects.filter((project) => !["completed", "cancelled"].includes(project.status)).length;
+    const running = acceptedProjects.filter((project) => project.status === "in_progress").length;
+    const completed = acceptedProjects.filter((project) => project.status === "completed").length;
+    const avgProgress = acceptedProjects.length
+      ? Math.round(acceptedProjects.reduce((sum, project) => sum + project.progressPercent, 0) / acceptedProjects.length)
       : 0;
     return [
       { label: "Dự án đang xử lý", value: String(active), icon: ListChecks, color: "text-primary" },
@@ -892,7 +933,7 @@ const OrganizerProjects = () => {
       { label: "Đã hoàn thành", value: String(completed), icon: CheckCircle, color: "text-secondary" },
       { label: "Tiến độ TB", value: `${avgProgress}%`, icon: Activity, color: "text-primary" },
     ];
-  }, [projects]);
+  }, [acceptedProjects]);
 
   const loadProjectContext = async (projectId: string) => {
     if (!projectId) {
@@ -931,9 +972,27 @@ const OrganizerProjects = () => {
   const loadProjects = async (preferredId?: string) => {
     const data = await apiClient.get<Project[]>("/organizer/projects");
     setProjects(data);
-    const nextId = data.find((project) => project.id === (preferredId || selectedProjectId))?.id ?? data[0]?.id ?? "";
+    const manageableProjects = data.filter(
+      (project) => project.organizerAssignmentStatus === "accepted",
+    );
+    const nextId =
+      manageableProjects.find((project) => project.id === (preferredId || selectedProjectId))?.id ??
+      manageableProjects[0]?.id ??
+      "";
     setSelectedProjectId(nextId);
     return nextId;
+  };
+
+  const loadRequestAssignments = async () => {
+    try {
+      const data = await apiClient.get<OrganizerRequestAssignment[]>("/organizer/requests/assignments");
+      setRequestAssignments(Array.isArray(data) ? data : []);
+      return Array.isArray(data) ? data : [];
+    } catch (err) {
+      setRequestAssignments([]);
+      toast.error(err instanceof Error ? err.message : "Không tải được yêu cầu tư vấn được phân công");
+      return [];
+    }
   };
 
   useEffect(() => {
@@ -943,18 +1002,23 @@ const OrganizerProjects = () => {
       try {
         setLoading(true);
         setError(null);
-        const [projectData, staffData, vendorData, vendorCategoryData] = await Promise.all([
+        const [projectData, requestAssignmentData, staffData, vendorData, vendorCategoryData] = await Promise.all([
           apiClient.get<Project[]>("/organizer/projects"),
+          apiClient
+            .get<OrganizerRequestAssignment[]>("/organizer/requests/assignments")
+            .catch(() => []),
           apiClient.get<StaffOption[]>("/organizer/staff", { pageSize: 100 }),
           apiClient.get<VendorOption[]>("/organizer/vendors", { pageSize: 100 }),
           apiClient.get<VendorCategory[]>("/organizer/vendor-categories"),
         ]);
         if (cancelled) return;
         setProjects(projectData);
+        setRequestAssignments(Array.isArray(requestAssignmentData) ? requestAssignmentData : []);
         setStaff(staffData);
         setVendors(vendorData);
         setVendorCategories(vendorCategoryData);
-        const firstId = projectData[0]?.id ?? "";
+        const firstId =
+          projectData.find((project) => project.organizerAssignmentStatus === "accepted")?.id ?? "";
         setSelectedProjectId(firstId);
         if (firstId) await loadProjectContext(firstId);
       } catch (err) {
@@ -975,7 +1039,37 @@ const OrganizerProjects = () => {
     void loadProjectContext(selectedProjectId);
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Real-time: auto-refresh khi admin phân công hoặc cập nhật dự án
+  const refreshRef = useRef<() => Promise<void>>();
+  refreshRef.current = async () => {
+    await loadRequestAssignments();
+    const currentId = await loadProjects(selectedProjectId);
+    if (currentId) await loadProjectContext(currentId);
+  };
+
+  useEffect(() => {
+    const socket = getSocket();
+    const ASSIGNMENT_TYPES = new Set([
+      "request",
+      "project",
+      "request_assignment_accepted",
+      "request_assignment_rejected",
+      "project_assignment_accepted",
+      "project_assignment_rejected",
+    ]);
+    const handleNotification = (payload: { type?: string }) => {
+      if (payload.type && ASSIGNMENT_TYPES.has(payload.type)) {
+        void refreshRef.current?.();
+      }
+    };
+    socket.on("notification", handleNotification);
+    return () => {
+      socket.off("notification", handleNotification);
+    };
+  }, []);
+
   const refresh = async () => {
+    await loadRequestAssignments();
     const currentId = await loadProjects(selectedProjectId);
     if (currentId) await loadProjectContext(currentId);
   };
@@ -1417,6 +1511,54 @@ const OrganizerProjects = () => {
     }
   };
 
+  const respondToAssignment = async (
+    project: Project,
+    action: "accept" | "reject",
+    reason?: string,
+  ) => {
+    setRespondingAssignmentId(project.id);
+    try {
+      await apiClient.patch(`/organizer/projects/${project.id}/assignment-response`, {
+        action,
+        reason,
+      });
+      toast.success(action === "accept" ? "Đã chấp nhận dự án" : "Đã gửi lý do từ chối");
+      if (action === "reject") {
+        setRejectionProject(null);
+        setRejectionReason("");
+      }
+      await loadProjects(action === "accept" ? project.id : undefined);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể phản hồi phân công");
+    } finally {
+      setRespondingAssignmentId(null);
+    }
+  };
+
+  const respondToRequestAssignment = async (
+    request: OrganizerRequestAssignment,
+    action: "accept" | "reject",
+    reason?: string,
+  ) => {
+    setRespondingAssignmentId(request.id);
+    try {
+      await apiClient.patch(`/organizer/requests/${request.id}/assignment-response`, {
+        action,
+        reason,
+      });
+      toast.success(action === "accept" ? "Đã nhận yêu cầu tư vấn" : "Đã gửi lý do từ chối");
+      if (action === "reject") {
+        setRejectionRequest(null);
+        setRejectionReason("");
+      }
+      await loadRequestAssignments();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Không thể phản hồi yêu cầu");
+    } finally {
+      setRespondingAssignmentId(null);
+    }
+  };
+
   if (loading) return <div className="font-body text-muted-foreground">Đang tải dự án...</div>;
   if (error) return <div className="font-body text-destructive">{error}</div>;
 
@@ -1426,7 +1568,7 @@ const OrganizerProjects = () => {
         <div>
           <h1 className="font-serif text-headline-lg text-foreground">Quản lý dự án</h1>
           <p className="font-body text-sm text-muted-foreground">
-            {projects.length} dự án được phân công
+            {acceptedProjects.length} dự án đã nhận
           </p>
         </div>
         <div className="flex p-1 rounded-xl bg-surface-low self-start lg:self-auto">
@@ -1451,6 +1593,121 @@ const OrganizerProjects = () => {
           ))}
         </div>
       </div>
+
+      <section className="rounded-2xl border border-border bg-surface-lowest p-5 shadow-ambient">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-serif text-headline-md text-foreground">Yêu cầu phân công</h2>
+            <p className="font-body text-sm text-muted-foreground">
+              Nhận hoặc từ chối các lời mời do admin gửi đến bạn.
+            </p>
+          </div>
+          <span className="rounded-full bg-amber-100 px-3 py-1 font-body text-xs font-semibold text-amber-800">
+            {pendingAssignmentCount} đang chờ
+          </span>
+        </div>
+
+        {pendingAssignmentCount > 0 ? (
+          <div className="space-y-3">
+            {pendingRequestAssignments.map((request) => (
+              <div
+                key={request.id}
+                className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-ambient"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-background px-2 py-0.5 font-body text-xs font-semibold text-primary">
+                        Yêu cầu tư vấn
+                      </span>
+                      <span className="rounded-full bg-background px-2 py-0.5 font-body text-xs font-semibold text-muted-foreground">
+                        {request.requestCode}
+                      </span>
+                      <p className="font-body font-semibold text-foreground">
+                        {parseEventNameFromNote(request.note) || request.eventType}
+                      </p>
+                    </div>
+                    <p className="mt-1 font-body text-sm text-muted-foreground">
+                      {request.customerName} · {request.guestCount ?? 0} khách · {request.budgetRange || "Chưa có ngân sách"}
+                    </p>
+                    <p className="mt-1 font-body text-xs text-muted-foreground">
+                      {request.eventDate ? new Date(request.eventDate).toLocaleDateString("vi-VN") : "Chưa có ngày"} · {request.locationText || "Chưa có địa điểm"}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={respondingAssignmentId === request.id}
+                      onClick={() => {
+                        setRejectionRequest(request);
+                        setRejectionProject(null);
+                        setRejectionReason("");
+                      }}
+                    >
+                      Từ chối
+                    </Button>
+                    <Button
+                      disabled={respondingAssignmentId === request.id}
+                      onClick={() => void respondToRequestAssignment(request, "accept")}
+                    >
+                      <CheckCircle size={16} className="mr-2" />
+                      Nhận yêu cầu
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {pendingProjectAssignments.map((project) => (
+              <div
+                key={project.id}
+                className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-ambient"
+              >
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-background px-2 py-0.5 font-body text-xs font-semibold text-primary">
+                        Dự án
+                      </span>
+                      <p className="font-body font-semibold text-foreground">{getProjectDisplayName(project)}</p>
+                    </div>
+                    <p className="mt-1 font-body text-sm text-muted-foreground">{getProjectCustomerName(project)}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      disabled={respondingAssignmentId === project.id}
+                      onClick={() => {
+                        setRejectionProject(project);
+                        setRejectionRequest(null);
+                        setRejectionReason("");
+                      }}
+                    >
+                      Từ chối
+                    </Button>
+                    <Button
+                      disabled={respondingAssignmentId === project.id}
+                      onClick={() => void respondToAssignment(project, "accept")}
+                    >
+                      <CheckCircle size={16} className="mr-2" />
+                      Chấp nhận
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-border bg-surface-low p-5 text-center">
+            <CheckCircle className="mx-auto text-emerald-600" size={24} />
+            <p className="mt-2 font-body text-sm font-semibold text-foreground">
+              Không có yêu cầu mới
+            </p>
+            <p className="mt-1 font-body text-xs text-muted-foreground">
+              Lời mời mới sẽ xuất hiện tại đây sau khi admin phân công cho bạn.
+            </p>
+          </div>
+        )}
+      </section>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {stats.map((stat) => (
@@ -2111,6 +2368,77 @@ const OrganizerProjects = () => {
         </div>
       </div>
 
+      <Dialog
+        open={Boolean(rejectionProject || rejectionRequest)}
+        onOpenChange={(open) => {
+          if (!open && !respondingAssignmentId) {
+            setRejectionProject(null);
+            setRejectionRequest(null);
+            setRejectionReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif">
+              {rejectionRequest ? "Từ chối yêu cầu tư vấn" : "Từ chối dự án"}
+            </DialogTitle>
+            <DialogDescription>
+              Lý do sẽ được gửi cho admin để họ xử lý và phân công lại.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="font-body text-sm font-semibold text-foreground">
+              {rejectionRequest
+                ? `${rejectionRequest.requestCode} · ${parseEventNameFromNote(rejectionRequest.note) || rejectionRequest.eventType}`
+                : rejectionProject
+                  ? getProjectDisplayName(rejectionProject)
+                  : ""}
+            </p>
+            <textarea
+              value={rejectionReason}
+              onChange={(event) => setRejectionReason(event.target.value)}
+              maxLength={1000}
+              rows={5}
+              autoFocus
+              placeholder="Ví dụ: Trùng lịch với dự án khác trong ngày diễn ra sự kiện..."
+              className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 font-body text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+            />
+            <p className="text-right font-body text-xs text-muted-foreground">
+              {rejectionReason.length}/1000
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={Boolean(respondingAssignmentId)}
+              onClick={() => {
+                setRejectionProject(null);
+                setRejectionRequest(null);
+                setRejectionReason("");
+              }}
+            >
+              Quay lại
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!rejectionReason.trim() || Boolean(respondingAssignmentId)}
+              onClick={() => {
+                if (rejectionRequest) {
+                  void respondToRequestAssignment(rejectionRequest, "reject", rejectionReason.trim());
+                  return;
+                }
+                if (rejectionProject) {
+                  void respondToAssignment(rejectionProject, "reject", rejectionReason.trim());
+                }
+              }}
+            >
+              Xác nhận từ chối
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={vendorDialogOpen} onOpenChange={setVendorDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -2440,6 +2768,9 @@ const OrganizerProjects = () => {
                         {filteredServiceTaskTemplates.length} kết quả
                       </span>
                     </div>
+                    <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 font-body text-[11px] font-semibold text-emerald-700">
+                      Đã chấp nhận phân công
+                    </span>
                   </div>
 
                   <div className="relative mt-3">

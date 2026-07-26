@@ -14,15 +14,19 @@ import {
   getCustomerEvents,
   getCustomerEventTasks,
   getCustomerNotifications,
+  getCustomerRequests,
+  getCustomerRequestById,
   getCustomerReviews,
   getCustomerTransactions,
   getEventMilestones,
+  getSettlementFeedback,
   markCustomerNotificationRead,
   respondToContract,
   sendChatMessage,
   submitCustomerInstallmentPayment,
   submitCustomerPayment,
   submitReview,
+  submitSettlementFeedback,
   updateReview,
 } from "./customer.service";
 
@@ -32,6 +36,18 @@ customerRouter.use(authenticate, requireRole("customer", "admin"));
 // GET /api/customer/dashboard
 customerRouter.get("/dashboard", async (req: Request, res: Response) => {
   const data = await getCustomerDashboard(req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/customer/requests
+customerRouter.get("/requests", async (req: Request, res: Response) => {
+  const data = await getCustomerRequests(req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// GET /api/customer/requests/:requestId
+customerRouter.get("/requests/:requestId", async (req: Request, res: Response) => {
+  const data = await getCustomerRequestById(p(req, "requestId"), req.user!.userId);
   sendSuccess(res, { data });
 });
 
@@ -165,4 +181,16 @@ customerRouter.get("/reviews", async (req: Request, res: Response) => {
 customerRouter.get("/documents", async (req: Request, res: Response) => {
   const data = await getCustomerDocuments(req.user!.userId);
   sendSuccess(res, { data });
+});
+
+// GET /api/customer/contracts/:id/settlement-feedback
+customerRouter.get("/contracts/:id/settlement-feedback", async (req: Request, res: Response) => {
+  const data = await getSettlementFeedback(p(req, "id"), req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+// POST /api/customer/contracts/:id/settlement-feedback
+customerRouter.post("/contracts/:id/settlement-feedback", async (req: Request, res: Response) => {
+  const data = await submitSettlementFeedback(p(req, "id"), req.user!.userId, req.body);
+  sendSuccess(res, { data, status: 201 });
 });

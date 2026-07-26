@@ -8,7 +8,7 @@ export { getChatMessages, sendChatMessage, deleteChatMessage } from "../../custo
 
 const assertOrganizerEvent = async (eventId: string, organizerUserId: string) => {
   const event = await prisma.event.findFirst({
-    where: { id: eventId, organizerUserId },
+    where: { id: eventId, organizerUserId, organizerAssignmentStatus: "accepted" },
     select: { id: true, name: true },
   });
   if (!event) throw createError("NOT_FOUND", "Event not found or access denied", 404);

@@ -161,7 +161,9 @@ const getManagedEvent = async (eventId: string, actorUserId: string, actorRole: 
   const event = await prisma.event.findFirst({
     where: {
       id: eventId,
-      ...(actorRole === "organizer" ? { organizerUserId: actorUserId } : {}),
+      ...(actorRole === "organizer"
+        ? { organizerUserId: actorUserId, organizerAssignmentStatus: "accepted" }
+        : {}),
     },
     select: {
       id: true,
@@ -260,6 +262,7 @@ export const removeEventVendor = async (
           id: true,
           name: true,
           organizerUserId: true,
+          organizerAssignmentStatus: true,
           organizerUser: { select: { displayName: true } },
         },
       },
@@ -267,7 +270,11 @@ export const removeEventVendor = async (
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Event vendor not found", 404);
-  if (actorRole === "organizer" && existing.event.organizerUserId !== actorUserId) {
+  if (
+    actorRole === "organizer" &&
+    (existing.event.organizerUserId !== actorUserId ||
+      existing.event.organizerAssignmentStatus !== "accepted")
+  ) {
     throw createError("FORBIDDEN", "You do not manage this event", 403);
   }
 

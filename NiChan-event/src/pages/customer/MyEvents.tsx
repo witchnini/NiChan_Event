@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Calendar, MapPin, Users, ArrowRight, UserRound } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
+import CustomerEventCard from "@/components/features/customer/CustomerEventCard";
 import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import { getEventDisplayName, getEventStatusLabel, eventStatusFilters, eventStatusColors } from "@/lib/eventDisplay";
+import {
+  eventStatusColors,
+  eventStatusFilters,
+  getEventDisplayName,
+  getEventStatusLabel,
+  getRequestStatusColor,
+  getRequestStatusLabel,
+  parseEventNameFromNote,
+} from "@/lib/eventDisplay";
 
 type CustomerEvent = {
   id: string;
@@ -23,12 +29,31 @@ type CustomerEvent = {
   consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
 };
 
-const statusFilters = eventStatusFilters;
+type CustomerRequest = {
+  id: string;
+  eventType: string;
+  eventDate?: string | null;
+  locationText?: string | null;
+  guestCount?: number | null;
+  budgetRange?: string | null;
+  note?: string | null;
+  status: string;
+  assignedManager?: { displayName: string } | null;
+  events: { id: string }[];
+};
+
+const REQUESTS_FILTER = "requests";
+const statusFilters = [
+  eventStatusFilters[0],
+  { value: REQUESTS_FILTER, label: "Yêu cầu mới" },
+  ...eventStatusFilters.slice(1),
+];
 
 const money = (value?: string | number | null) => Number(value || 0).toLocaleString("vi-VN") + "đ";
 
 const MyEvents = () => {
   const [events, setEvents] = useState<CustomerEvent[]>([]);
+  const [requests, setRequests] = useState<CustomerRequest[]>([]);
   const [activeFilter, setActiveFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
@@ -36,7 +61,16 @@ const MyEvents = () => {
     const load = async () => {
       setLoading(true);
       try {
-        setEvents(await apiClient.get<CustomerEvent[]>("/customer/events", { status: activeFilter === "all" ? undefined : activeFilter }));
+        const [eventData, requestData] = await Promise.all([
+          activeFilter === REQUESTS_FILTER
+            ? Promise.resolve([] as CustomerEvent[])
+            : apiClient.get<CustomerEvent[]>("/customer/events", {
+                status: activeFilter === "all" ? undefined : activeFilter,
+              }),
+          apiClient.get<CustomerRequest[]>("/customer/requests"),
+        ]);
+        setEvents(eventData);
+        setRequests(requestData.filter((request) => request.events.length === 0));
       } catch (error) {
         toast.error("Không tải được danh sách sự kiện");
       } finally {
@@ -45,6 +79,9 @@ const MyEvents = () => {
     };
     void load();
   }, [activeFilter]);
+
+  const visibleRequests = activeFilter === "all" || activeFilter === REQUESTS_FILTER ? requests : [];
+  const hasItems = visibleRequests.length > 0 || events.length > 0;
 
   return (
     <div className="min-h-screen pt-24 pb-16">
@@ -67,38 +104,41 @@ const MyEvents = () => {
 
           <div className="space-y-6">
             {loading && <p className="font-body text-muted-foreground">Đang tải sự kiện...</p>}
-            {!loading && events.length === 0 && (
+            {!loading && !hasItems && (
               <div className="text-center py-16">
                 <p className="font-body text-muted-foreground">Không có sự kiện nào trong danh mục này.</p>
               </div>
             )}
+            {visibleRequests.map((request, i) => (
+              <motion.div key={request.id} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}>
+                <CustomerEventCard
+                  to={`/dashboard/yeu-cau/${request.id}`}
+                  title={parseEventNameFromNote(request.note) || request.eventType}
+                  statusLabel={getRequestStatusLabel(request.status)}
+                  statusClassName={getRequestStatusColor(request.status)}
+                  eventDate={request.eventDate}
+                  locationText={request.locationText}
+                  guestCount={request.guestCount}
+                  managerName={request.assignedManager?.displayName}
+                  progressPercent={0}
+                  budget={request.budgetRange || undefined}
+                />
+              </motion.div>
+            ))}
             {events.map((event, i) => (
               <motion.div key={event.id} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}>
-                <Link to={`/dashboard/su-kien/${event.id}`} className="block bg-surface-lowest rounded-xl p-6 shadow-ambient hover:shadow-ambient-lg transition-shadow">
-                  <div className="flex flex-col md:flex-row md:items-center gap-6">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-serif text-headline-md text-foreground">{getEventDisplayName(event)}</h3>
-                        <span className={`px-3 py-1 rounded-full text-xs font-body font-semibold ${eventStatusColors[event.status] ?? "bg-muted text-muted-foreground"}`}>{getEventStatusLabel(event.status)}</span>
-                      </div>
-                      <div className="flex flex-wrap gap-4 text-sm font-body text-muted-foreground">
-                        <span className="flex items-center gap-1"><Calendar size={14} /> {event.eventDate ? new Date(event.eventDate).toLocaleDateString("vi-VN") : "-"}</span>
-                        <span className="flex items-center gap-1"><MapPin size={14} /> {event.locationText || "-"}</span>
-                        <span className="flex items-center gap-1"><Users size={14} /> {event.guestCount ?? 0} khách</span>
-                        <span className="flex items-center gap-1"><UserRound size={14} /> Quản lý dự án: {event.organizerUser?.displayName ?? "Chưa phân công"}</span>
-                      </div>
-                    </div>
-                    <div className="w-full md:w-48 space-y-2">
-                      <div className="flex items-center justify-between text-sm font-body">
-                        <span className="text-muted-foreground">Tiến độ</span>
-                        <span className="text-foreground font-semibold">{event.progressPercent ?? 0}%</span>
-                      </div>
-                      <Progress value={event.progressPercent ?? 0} className="h-2" />
-                      <p className="text-sm font-body text-muted-foreground">Ngân sách: {money(event.budgetEstimated)}</p>
-                    </div>
-                    <ArrowRight size={20} className="text-muted-foreground hidden md:block" />
-                  </div>
-                </Link>
+                <CustomerEventCard
+                  to={`/dashboard/su-kien/${event.id}`}
+                  title={getEventDisplayName(event)}
+                  statusLabel={getEventStatusLabel(event.status)}
+                  statusClassName={eventStatusColors[event.status] ?? "bg-muted text-muted-foreground"}
+                  eventDate={event.eventDate}
+                  locationText={event.locationText}
+                  guestCount={event.guestCount}
+                  managerName={event.organizerUser?.displayName}
+                  progressPercent={event.progressPercent}
+                  budget={money(event.budgetEstimated)}
+                />
               </motion.div>
             ))}
           </div>

@@ -343,7 +343,12 @@ export const updateAdminProjectOrganizer = async (
   const { updatedProject, notification } = await prisma.$transaction(async (tx) => {
     const updatedProject = await tx.event.update({
       where: { id: projectId },
-      data: { organizerUserId: input.organizerUserId },
+      data: {
+        organizerUserId: input.organizerUserId,
+        organizerAssignmentStatus: input.organizerUserId ? "pending" : null,
+        organizerRejectionReason: null,
+        organizerRespondedAt: null,
+      },
       include: {
         customerUser: { select: { id: true, displayName: true, email: true } },
         organizerUser: { select: { id: true, displayName: true, email: true } },

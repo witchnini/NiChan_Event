@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link, useLocation, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Download, FileText, ClipboardCheck, MessageSquare } from "lucide-react";
+import { ArrowLeft, Download, FileText, ClipboardCheck, MessageSquare, CreditCard, Banknote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 import ContractDocument, { type FullContract } from "@/components/features/contracts/ContractDocument";
 import { exportContractPdf } from "@/lib/contractPdf";
 import { useAuth } from "@/contexts/AuthContext";
+import PaymentQRModal from "@/components/features/payment/PaymentQRModal";
+import PaymentHistory from "@/components/features/payment/PaymentHistory";
+import { useCreatePayment } from "@/hooks/usePayment";
+import type { PaymentQRInfo } from "@/services/payment";
 
 type VersionPurpose = "original" | "settlement";
 type ContractWithFeedback = FullContract & {
@@ -27,6 +31,12 @@ const ContractView = () => {
   const [viewPurpose, setViewPurpose] = useState<VersionPurpose>(
     (searchParams.get("view") as VersionPurpose) || "original",
   );
+
+  // Payment states
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [currentPaymentId, setCurrentPaymentId] = useState<string | null>(null);
+  const [currentQRInfo, setCurrentQRInfo] = useState<PaymentQRInfo | null>(null);
+  const { create: createPayment, loading: paymentLoading } = useCreatePayment();
 
   const isPortalView = location.pathname.startsWith("/admin") || location.pathname.startsWith("/ban-to-chuc");
   const backPath =
@@ -85,6 +95,39 @@ const ContractView = () => {
     }
   };
 
+  // Payment: kiểm tra hợp đồng có thể thanh toán
+  const canPay =
+    user?.role === "customer" &&
+    contract &&
+    ["sent", "active"].includes(contract.status);
+
+  const handlePayment = async () => {
+    if (!contract) return;
+    try {
+      const totalValue = Number((contract as any).totalValue || 0);
+      const type = contract.status === "sent" ? "deposit" : "contract_payment";
+      const amount = type === "deposit" ? Math.round(totalValue * 0.3) : totalValue;
+      const desc =
+        type === "deposit"
+          ? `Đặt cọc hợp đồng ${contract.contractCode}`
+          : `Thanh toán hợp đồng ${contract.contractCode}`;
+
+      const result = await createPayment({
+        contractId: contract.id,
+        eventId: (contract as any).eventId,
+        type,
+        amount,
+        description: desc,
+      });
+
+      setCurrentPaymentId(result.paymentOrder.id);
+      setCurrentQRInfo(result.qr);
+      setPaymentModalOpen(true);
+    } catch (err: any) {
+      toast.error(err?.message || "Không thể tạo lệnh thanh toán");
+    }
+  };
+
   return (
     <div className={isPortalView ? "min-h-full pb-8" : "min-h-screen pt-24 pb-16 bg-surface-low"}>
       <div className={isPortalView ? "mx-auto max-w-[980px]" : "container mx-auto px-6"}>
@@ -92,9 +135,27 @@ const ContractView = () => {
           <Link to={backPath} className="flex items-center gap-2 text-muted-foreground font-body text-sm hover:text-primary transition-colors">
             <ArrowLeft size={16} /> Quay lại hợp đồng
           </Link>
-          <Button variant="hero" size="sm" onClick={handleSavePdf} disabled={!contract || exporting}>
-            <Download size={16} className="mr-1" /> {exporting ? "Đang tạo PDF..." : "Lưu PDF"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {canPay && (
+              <Button
+                variant="hero"
+                size="sm"
+                onClick={handlePayment}
+                disabled={paymentLoading}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                <CreditCard size={16} className="mr-1" />
+                {paymentLoading
+                  ? "Đang tạo..."
+                  : contract?.status === "sent"
+                    ? "Đặt cọc"
+                    : "Thanh toán"}
+              </Button>
+            )}
+            <Button variant="hero" size="sm" onClick={handleSavePdf} disabled={!contract || exporting}>
+              <Download size={16} className="mr-1" /> {exporting ? "Đang tạo PDF..." : "Lưu PDF"}
+            </Button>
+          </div>
         </div>
 
         {showToggle && (
@@ -157,7 +218,25 @@ const ContractView = () => {
             <ContractDocument ref={docRef} contract={contract} versionPurpose={viewPurpose} />
           </div>
         )}
+
+        {/* Payment History */}
+        {contract && user?.role === "customer" && (
+          <div className="max-w-[820px] mx-auto mt-8">
+            <PaymentHistory contractId={contract.id} />
+          </div>
+        )}
       </div>
+
+      {/* Payment QR Modal */}
+      <PaymentQRModal
+        open={paymentModalOpen}
+        onOpenChange={setPaymentModalOpen}
+        paymentOrderId={currentPaymentId}
+        qrInfo={currentQRInfo}
+        onCompleted={() => {
+          toast.success("Thanh toán thành công!");
+        }}
+      />
     </div>
   );
 };

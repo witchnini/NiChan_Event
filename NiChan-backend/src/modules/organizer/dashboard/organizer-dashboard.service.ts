@@ -13,7 +13,11 @@ export const getOrganizerDashboard = async (organizerUserId: string) => {
     await prisma.$transaction([
       // project progress
       prisma.event.findMany({
-        where: { organizerUserId, status: { not: "cancelled" } },
+        where: {
+          organizerUserId,
+          organizerAssignmentStatus: "accepted",
+          status: { not: "cancelled" },
+        },
         select: {
           id: true,
           name: true,
@@ -28,14 +32,14 @@ export const getOrganizerDashboard = async (organizerUserId: string) => {
       // tasks grouped by status — raw aggregate
       prisma.projectTask.groupBy({
         by: ["status"],
-        where: { event: { organizerUserId } },
+        where: { event: { organizerUserId, organizerAssignmentStatus: "accepted" } },
         _count: { status: true },
         orderBy: { _count: { status: "desc" } },
       }),
       // upcoming tasks this week
       prisma.projectTask.findMany({
         where: {
-          event: { organizerUserId },
+          event: { organizerUserId, organizerAssignmentStatus: "accepted" },
           dueAt: { gte: now, lte: weekEnd },
           status: { not: "done" },
         },

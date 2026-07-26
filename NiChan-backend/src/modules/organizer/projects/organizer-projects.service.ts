@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
+import { emitNotification } from "../../../lib/socket";
 import { createError } from "../../../middleware/errorHandler";
 import {
   emitCustomerNotification,
@@ -8,6 +9,8 @@ import {
 import { TASK_STATUS_TRANSITIONS, TaskStatus } from "../../../types/enums";
 import type {
   CreateTaskInput,
+  RespondProjectAssignmentInput,
+  RespondRequestAssignmentInput,
   UpdateProjectStatusInput,
   UpdateTaskStatusInput,
 } from "./organizer-projects.schema";
@@ -29,6 +32,9 @@ export const listOrganizerProjects = async (organizerUserId: string) => {
       eventDate: true,
       guestCount: true,
       progressPercent: true,
+      organizerAssignmentStatus: true,
+      organizerRejectionReason: true,
+      organizerRespondedAt: true,
       locationText: true,
       customerUser: { select: { id: true, displayName: true, avatarUrl: true, email: true, phone: true } },
       consultationRequest: {
@@ -48,9 +54,210 @@ export const listOrganizerProjects = async (organizerUserId: string) => {
   });
 };
 
+export const listOrganizerRequestAssignments = async (organizerUserId: string) => {
+  return prisma.consultationRequest.findMany({
+    where: {
+      assignedManagerId: organizerUserId,
+      status: { in: ["reviewing", "quoted"] },
+    },
+    select: {
+      id: true,
+      requestCode: true,
+      customerName: true,
+      phone: true,
+      email: true,
+      eventType: true,
+      eventDate: true,
+      guestCount: true,
+      budgetRange: true,
+      locationText: true,
+      note: true,
+      status: true,
+      organizerRequestStatus: true,
+      organizerRequestRejectionReason: true,
+      organizerRequestRespondedAt: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+};
+
+export const respondRequestAssignment = async (
+  requestId: string,
+  organizerUserId: string,
+  input: RespondRequestAssignmentInput,
+) => {
+  const request = await prisma.consultationRequest.findFirst({
+    where: { id: requestId, assignedManagerId: organizerUserId },
+    select: {
+      id: true,
+      requestCode: true,
+      customerName: true,
+      eventType: true,
+      organizerRequestStatus: true,
+    },
+  });
+  if (!request) throw createError("NOT_FOUND", "Request assignment not found", 404);
+  if (request.organizerRequestStatus !== "pending") {
+    throw createError("CONFLICT", "Request assignment has already been responded to", 409);
+  }
+
+  const accepted = input.action === "accept";
+  const reason = input.reason?.trim() ?? "";
+  const result = await prisma.$transaction(async (tx) => {
+    const updateResult = await tx.consultationRequest.updateMany({
+      where: {
+        id: requestId,
+        assignedManagerId: organizerUserId,
+        organizerRequestStatus: "pending",
+      },
+      data: {
+        organizerRequestStatus: accepted ? "accepted" : "rejected",
+        organizerRequestRejectionReason: accepted ? null : reason,
+        organizerRequestRespondedAt: new Date(),
+      },
+    });
+    if (updateResult.count === 0) {
+      throw createError("CONFLICT", "Request assignment has already been responded to", 409);
+    }
+
+    const updatedRequest = await tx.consultationRequest.findUniqueOrThrow({
+      where: { id: requestId },
+    });
+
+    const admins = await tx.user.findMany({
+      where: { role: "admin", status: "active", deletedAt: null },
+      select: { id: true },
+    });
+    const notifications = await Promise.all(
+      admins.map((admin) =>
+        tx.notification.create({
+          data: {
+            userId: admin.id,
+            scope: "admin",
+            type: accepted ? "request_assignment_accepted" : "request_assignment_rejected",
+            title: accepted ? "Organizer đã nhận yêu cầu" : "Organizer từ chối yêu cầu",
+            message: accepted
+              ? `Organizer đã chấp nhận yêu cầu ${request.requestCode}.`
+              : `Organizer đã từ chối yêu cầu ${request.requestCode}. Lý do: ${reason}`,
+            entityType: "consultation_request",
+            entityId: requestId,
+          },
+        }),
+      ),
+    );
+
+    return { updatedRequest, notifications };
+  });
+
+  result.notifications.forEach((notification) => {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
+    });
+  });
+
+  return result.updatedRequest;
+};
+
+export const respondProjectAssignment = async (
+  projectId: string,
+  organizerUserId: string,
+  input: RespondProjectAssignmentInput,
+) => {
+  const project = await prisma.event.findFirst({
+    where: { id: projectId, organizerUserId },
+    select: { id: true, name: true, organizerAssignmentStatus: true },
+  });
+  if (!project) throw createError("NOT_FOUND", "Project assignment not found", 404);
+  if (project.organizerAssignmentStatus !== "pending") {
+    throw createError("CONFLICT", "Project assignment has already been responded to", 409);
+  }
+
+  const accepted = input.action === "accept";
+  const result = await prisma.$transaction(async (tx) => {
+    const updateResult = await tx.event.updateMany({
+      where: {
+        id: projectId,
+        organizerUserId,
+        organizerAssignmentStatus: "pending",
+      },
+      data: {
+        organizerAssignmentStatus: accepted ? "accepted" : "rejected",
+        organizerRejectionReason: accepted ? null : input.reason!.trim(),
+        organizerRespondedAt: new Date(),
+      },
+    });
+    if (updateResult.count === 0) {
+      throw createError("CONFLICT", "Project assignment has already been responded to", 409);
+    }
+
+    const updatedProject = await tx.event.findUniqueOrThrow({
+      where: { id: projectId },
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: projectId,
+        actorUserId: organizerUserId,
+        iconName: accepted ? "check" : "x",
+        message: accepted
+          ? `Organizer đã chấp nhận dự án ${project.name}.`
+          : `Organizer đã từ chối dự án ${project.name}. Lý do: ${input.reason!.trim()}`,
+      },
+    });
+
+    const admins = await tx.user.findMany({
+      where: { role: "admin", status: "active", deletedAt: null },
+      select: { id: true },
+    });
+    const notifications = await Promise.all(
+      admins.map((admin) =>
+        tx.notification.create({
+          data: {
+            userId: admin.id,
+            scope: "admin",
+            type: accepted ? "project_assignment_accepted" : "project_assignment_rejected",
+            title: accepted ? "Organizer đã nhận dự án" : "Organizer từ chối dự án",
+            message: accepted
+              ? `Organizer đã chấp nhận dự án ${project.name}.`
+              : `Organizer đã từ chối dự án ${project.name}. Lý do: ${input.reason!.trim()}`,
+            entityType: "event",
+            entityId: projectId,
+          },
+        }),
+      ),
+    );
+    return { updatedProject, notifications };
+  });
+
+  result.notifications.forEach((notification) => {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
+    });
+  });
+  return result.updatedProject;
+};
+
 export const getOrganizerProjectById = async (projectId: string, organizerUserId: string) => {
   const project = await prisma.event.findFirst({
-    where: { id: projectId, organizerUserId, consultationRequest: { status: "confirmed" } },
+    where: {
+      id: projectId,
+      organizerUserId,
+      organizerAssignmentStatus: "accepted",
+      consultationRequest: { status: "confirmed" },
+    },
     include: {
       customerUser: { select: { id: true, displayName: true, avatarUrl: true, email: true, phone: true } },
       organizerUser: { select: { id: true, displayName: true, avatarUrl: true, email: true, phone: true } },
@@ -81,7 +288,7 @@ export const getOrganizerProjectContracts = async (
   organizerUserId: string,
 ) => {
   const event = await prisma.event.findFirst({
-    where: { id: projectId, organizerUserId },
+    where: { id: projectId, organizerUserId, organizerAssignmentStatus: "accepted" },
     select: { id: true },
   });
   if (!event) throw createError("NOT_FOUND", "Project not found", 404);
@@ -126,7 +333,9 @@ export const getOrganizerContractById = async (
   const contract = await prisma.contract.findFirst({
     where: {
       id: contractId,
-      ...(role === "admin" ? {} : { event: { organizerUserId } }),
+      ...(role === "admin"
+        ? {}
+        : { event: { organizerUserId, organizerAssignmentStatus: "accepted" } }),
     },
     include: {
       event: {
@@ -187,7 +396,12 @@ export const recalculateProjectProgress = async (
 
 export const getKanban = async (projectId: string, organizerUserId: string) => {
   const event = await prisma.event.findFirst({
-    where: { id: projectId, organizerUserId, consultationRequest: { status: "confirmed" } },
+    where: {
+      id: projectId,
+      organizerUserId,
+      organizerAssignmentStatus: "accepted",
+      consultationRequest: { status: "confirmed" },
+    },
     select: {
       id: true,
       name: true,
@@ -311,7 +525,7 @@ export const updateProjectStatus = async (
   input: UpdateProjectStatusInput,
 ) => {
   const event = await prisma.event.findFirst({
-    where: { id: projectId, organizerUserId },
+    where: { id: projectId, organizerUserId, organizerAssignmentStatus: "accepted" },
     select: { id: true, name: true, status: true, customerUserId: true },
   });
   if (!event) throw createError("NOT_FOUND", "Project not found", 404);
@@ -392,7 +606,9 @@ export const createTask = async (
   const event = await prisma.event.findFirst({
     where: {
       id: input.eventId,
-      ...(organizerUserId ? { organizerUserId } : {}),
+      ...(organizerUserId
+        ? { organizerUserId, organizerAssignmentStatus: "accepted" }
+        : {}),
     },
     select: { id: true },
   });
@@ -426,7 +642,9 @@ const getTaskForOrganizer = async (taskId: string, organizerUserId?: string) => 
   return prisma.projectTask.findFirst({
     where: {
       id: taskId,
-      ...(organizerUserId ? { event: { organizerUserId } } : {}),
+      ...(organizerUserId
+        ? { event: { organizerUserId, organizerAssignmentStatus: "accepted" } }
+        : {}),
     },
     select: { id: true, eventId: true, status: true },
   });

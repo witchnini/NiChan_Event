@@ -40,6 +40,7 @@ type ProjectRequest = {
   note?: string | null;
   customerUserId?: string | null;
   assignedManagerId?: string | null;
+  organizerRequestStatus?: string | null;
 };
 
 const buildEventData = (request: ProjectRequest & { customerUserId: string; assignedManagerId: string }) => ({
@@ -47,6 +48,9 @@ const buildEventData = (request: ProjectRequest & { customerUserId: string; assi
   type: request.eventType,
   customerUserId: request.customerUserId,
   organizerUserId: request.assignedManagerId,
+  organizerAssignmentStatus: request.organizerRequestStatus === "accepted" ? "accepted" : "pending",
+  organizerRejectionReason: null,
+  organizerRespondedAt: null,
   consultationRequestId: request.id,
   eventDate: request.eventDate,
   locationText: request.locationText,
@@ -76,11 +80,11 @@ const upsertProjectForConfirmedRequest = async (
     ? tx.event.update({
         where: { id: existingEventId },
         data: eventData,
-        select: { id: true, name: true, status: true, organizerUserId: true },
+        select: { id: true, name: true, status: true, organizerUserId: true, organizerAssignmentStatus: true },
       })
     : tx.event.create({
         data: { ...eventData, status: "planning" },
-        select: { id: true, name: true, status: true, organizerUserId: true },
+        select: { id: true, name: true, status: true, organizerUserId: true, organizerAssignmentStatus: true },
       });
 };
 
@@ -208,6 +212,9 @@ export const assignManager = async (requestId: string, input: AssignManagerInput
       where: { id: request.id },
       data: {
         assignedManagerId: input.managerUserId,
+        organizerRequestStatus: request.status === "confirmed" ? "accepted" : "pending",
+        organizerRequestRejectionReason: null,
+        organizerRequestRespondedAt: null,
         customerUserId: customerUser.id,
         ...(request.status === "new" ? { status: "reviewing" } : {}),
       },
@@ -273,8 +280,10 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
     where: { id: requestId },
     select: {
       id: true,
+      requestCode: true,
       status: true,
       assignedManagerId: true,
+      organizerRequestStatus: true,
       customerUserId: true,
       eventType: true,
       eventDate: true,
@@ -309,6 +318,9 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
   if (input.status === "confirmed" && !existing.assignedManagerId) {
     throw createError("CONFLICT", "Assign an organizer before confirming this request", 409);
   }
+  if (input.status === "confirmed" && existing.organizerRequestStatus !== "accepted") {
+    throw createError("CONFLICT", "Organizer must accept this request before confirming it", 409);
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     const updatedRequest = await tx.consultationRequest.update({
@@ -319,7 +331,38 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
       },
     });
 
-    if (input.status !== "confirmed") return { updatedRequest, customerNotification: null };
+    if (input.status !== "confirmed") {
+      const statusMessage: Record<string, { title: string; message: string }> = {
+        reviewing: {
+          title: "Yêu cầu đang được xem xét",
+          message: `Yêu cầu ${existing.requestCode} đang được đội ngũ NiChan xem xét.`,
+        },
+        quoted: {
+          title: "Yêu cầu đã được báo giá",
+          message: `Yêu cầu ${existing.requestCode} đã được báo giá. Vui lòng theo dõi thông tin cập nhật.`,
+        },
+        rejected: {
+          title: "Yêu cầu chưa được chấp thuận",
+          message: `Yêu cầu ${existing.requestCode} chưa được chấp thuận.`,
+        },
+      };
+      const content = statusMessage[input.status];
+      const customerNotification =
+        existing.customerUserId && content
+          ? await tx.notification.create({
+              data: {
+                userId: existing.customerUserId,
+                scope: "customer",
+                type: "request_status",
+                title: content.title,
+                message: content.message,
+                entityType: "consultation_request",
+                entityId: requestId,
+              },
+            })
+          : null;
+      return { updatedRequest, customerNotification };
+    }
 
     const event = await upsertProjectForConfirmedRequest(tx, existing, existing.events[0]?.id);
     const tracking = await ensureCustomerTrackingInTransaction(tx, event.id, {
@@ -329,10 +372,33 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
       notificationMessage: `Sự kiện ${event.name} đã được xác nhận. Bạn có thể theo dõi tiến độ trên dashboard.`,
     });
 
-    return { updatedRequest, customerNotification: tracking.notification };
+    const organizerNotification = await tx.notification.create({
+      data: {
+        userId: existing.assignedManagerId!,
+        scope: "organizer",
+        type: "project",
+        title: "Dự án mới được phân công",
+        message: `Bạn được phân công dự án ${event.name}. Vui lòng phản hồi trước khi bắt đầu quản lý.`,
+        entityType: "event",
+        entityId: event.id,
+      },
+    });
+
+    return { updatedRequest, customerNotification: tracking.notification, organizerNotification };
   });
 
   if (result.customerNotification) emitCustomerNotification(result.customerNotification);
+  if ("organizerNotification" in result && result.organizerNotification) {
+    emitNotification(result.organizerNotification.userId, {
+      id: result.organizerNotification.id,
+      type: result.organizerNotification.type,
+      title: result.organizerNotification.title ?? null,
+      message: result.organizerNotification.message,
+      entityType: result.organizerNotification.entityType ?? null,
+      entityId: result.organizerNotification.entityId ?? null,
+      createdAt: result.organizerNotification.createdAt,
+    });
+  }
   return result.updatedRequest;
 };
 

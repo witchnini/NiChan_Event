@@ -26,6 +26,9 @@ type Project = {
   eventDate?: string | null;
   guestCount?: number | null;
   progressPercent: number;
+  organizerAssignmentStatus?: "pending" | "accepted" | "rejected" | null;
+  organizerRejectionReason?: string | null;
+  organizerRespondedAt?: string | null;
   customerUser: { id: string; displayName: string; email?: string | null };
   organizerUser?: { id: string; displayName: string; email?: string | null } | null;
   consultationRequest?: {
@@ -444,6 +447,25 @@ const AdminProjects = () => {
                       {statusLabel[project.status] ?? project.status}
                     </span>
                   </div>
+                  {project.organizerAssignmentStatus && (
+                    <div className="mt-2">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-1 text-[11px] font-body font-semibold ${
+                          project.organizerAssignmentStatus === "accepted"
+                            ? "bg-emerald-100 text-emerald-700"
+                            : project.organizerAssignmentStatus === "rejected"
+                              ? "bg-red-100 text-red-700"
+                              : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {project.organizerAssignmentStatus === "accepted"
+                          ? "Organizer đã chấp nhận"
+                          : project.organizerAssignmentStatus === "rejected"
+                            ? "Organizer đã từ chối"
+                            : "Đang chờ organizer phản hồi"}
+                      </span>
+                    </div>
+                  )}
                   <div className="mt-3 flex items-center justify-between text-xs font-body text-muted-foreground">
                     <span>{project._count.tasks} công việc</span>
                     <span>{project._count.staffAssignments ?? 0} nhân sự</span>
@@ -519,6 +541,55 @@ const AdminProjects = () => {
                   )}
                 </div>
               </div>
+              {selectedProject.organizerAssignmentStatus === "pending" && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 font-body text-sm text-amber-900">
+                  Đang chờ {selectedProject.organizerUser?.displayName ?? "organizer"} chấp nhận yêu cầu
+                  phân công. Organizer chưa có quyền quản lý dự án trong thời gian này.
+                </div>
+              )}
+              {selectedProject.organizerAssignmentStatus === "accepted" && selectedProject.organizerUser?.id && (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-body text-sm text-emerald-900">
+                  <p className="font-semibold">
+                    {selectedProject.organizerUser.displayName} đã chấp nhận phân công.
+                  </p>
+                  <p className="mt-1">
+                    Admin có thể gửi lại yêu cầu nếu cần organizer xác nhận lại.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => updateProjectOrganizer(selectedProject.id, selectedProject.organizerUser!.id)}
+                  >
+                    Gửi lại yêu cầu
+                  </Button>
+                </div>
+              )}
+              {selectedProject.organizerAssignmentStatus === "rejected" && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 font-body text-sm text-red-900">
+                  <p className="font-semibold">
+                    {selectedProject.organizerUser?.displayName ?? "Organizer"} đã từ chối dự án
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    Lý do: {selectedProject.organizerRejectionReason || "Không có lý do"}
+                  </p>
+                  {selectedProject.organizerUser?.id && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() =>
+                        updateProjectOrganizer(
+                          selectedProject.id,
+                          selectedProject.organizerUser!.id,
+                        )
+                      }
+                    >
+                      Gửi lại yêu cầu
+                    </Button>
+                  )}
+                </div>
+              )}
             </motion.div>
           )}
 

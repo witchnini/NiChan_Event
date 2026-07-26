@@ -178,7 +178,9 @@ export const getEventStaff = async (eventId: string, actorUserId: string, actorR
   const event = await prisma.event.findFirst({
     where: {
       id: eventId,
-      ...(actorRole === "organizer" ? { organizerUserId: actorUserId } : {}),
+      ...(actorRole === "organizer"
+        ? { organizerUserId: actorUserId, organizerAssignmentStatus: "accepted" }
+        : {}),
     },
     select: { id: true, name: true },
   });
@@ -212,7 +214,9 @@ export const assignStaffToEvent = async (
   const event = await prisma.event.findFirst({
     where: {
       id: input.eventId,
-      ...(actorRole === "organizer" ? { organizerUserId: actorUserId } : {}),
+      ...(actorRole === "organizer"
+        ? { organizerUserId: actorUserId, organizerAssignmentStatus: "accepted" }
+        : {}),
     },
     select: {
       id: true,
@@ -293,6 +297,7 @@ export const updateStaffAssignment = async (
           id: true,
           name: true,
           organizerUserId: true,
+          organizerAssignmentStatus: true,
           organizerUser: { select: { displayName: true } },
         },
       },
@@ -300,7 +305,11 @@ export const updateStaffAssignment = async (
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Assignment not found", 404);
-  if (actorRole === "organizer" && existing.event.organizerUserId !== actorUserId) {
+  if (
+    actorRole === "organizer" &&
+    (existing.event.organizerUserId !== actorUserId ||
+      existing.event.organizerAssignmentStatus !== "accepted")
+  ) {
     throw createError("FORBIDDEN", "You do not manage this event", 403);
   }
 
@@ -360,6 +369,7 @@ export const removeStaffFromEvent = async (
           id: true,
           name: true,
           organizerUserId: true,
+          organizerAssignmentStatus: true,
           organizerUser: { select: { displayName: true } },
         },
       },
@@ -367,7 +377,11 @@ export const removeStaffFromEvent = async (
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Assignment not found", 404);
-  if (actorRole === "organizer" && existing.event.organizerUserId !== actorUserId) {
+  if (
+    actorRole === "organizer" &&
+    (existing.event.organizerUserId !== actorUserId ||
+      existing.event.organizerAssignmentStatus !== "accepted")
+  ) {
     throw createError("FORBIDDEN", "You do not manage this event", 403);
   }
 
@@ -395,7 +409,7 @@ export const removeStaffFromEvent = async (
 
 export const getStaffShiftsForOrganizer = async (organizerUserId: string) => {
   return prisma.shiftSchedule.findMany({
-    where: { event: { organizerUserId } },
+    where: { event: { organizerUserId, organizerAssignmentStatus: "accepted" } },
     orderBy: [{ workDate: "asc" }, { startTime: "asc" }],
     include: {
       staffUser: { select: { id: true, displayName: true, avatarUrl: true } },

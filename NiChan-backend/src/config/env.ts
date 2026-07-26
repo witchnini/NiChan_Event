@@ -52,6 +52,13 @@ export const env = {
   // App URL (dùng cho email links)
   appUrl: optionalEnv("APP_URL", "http://localhost:8080"),
 
+  // SePay Payment Gateway
+  sepayApiKey: optionalEnv("SEPAY_API_KEY"),
+  sepayWebhookApiKey: optionalEnv("SEPAY_WEBHOOK_API_KEY"),
+  sepayBankAccount: optionalEnv("SEPAY_BANK_ACCOUNT"),
+  sepayBankCode: optionalEnv("SEPAY_BANK_CODE", "MBBank"),
+  sepayAccountHolder: optionalEnv("SEPAY_ACCOUNT_HOLDER"),
+
   // Computed
   isProduction: process.env.NODE_ENV === "production",
   isDevelopment: process.env.NODE_ENV !== "production",

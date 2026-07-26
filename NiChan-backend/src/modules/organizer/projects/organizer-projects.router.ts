@@ -6,6 +6,8 @@ import { p, q } from "../../../utils/request";
 import { sendSuccess } from "../../../utils/response";
 import {
   createTaskSchema,
+  respondProjectAssignmentSchema,
+  respondRequestAssignmentSchema,
   updateProjectStatusSchema,
   updateTaskStatusSchema,
 } from "./organizer-projects.schema";
@@ -18,7 +20,10 @@ import {
   getOrganizerProjectById,
   getOrganizerProjectContracts,
   getTask,
+  listOrganizerRequestAssignments,
   listOrganizerProjects,
+  respondProjectAssignment,
+  respondRequestAssignment,
   updateProjectStatus,
   updateTask,
   updateTaskStatus,
@@ -32,6 +37,37 @@ organizerProjectsRouter.get("/projects", async (req: Request, res: Response) => 
   const data = await listOrganizerProjects(req.user!.userId);
   sendSuccess(res, { data });
 });
+
+organizerProjectsRouter.get("/requests/assignments", async (req: Request, res: Response) => {
+  const data = await listOrganizerRequestAssignments(req.user!.userId);
+  sendSuccess(res, { data });
+});
+
+organizerProjectsRouter.patch(
+  "/requests/:requestId/assignment-response",
+  validate(respondRequestAssignmentSchema),
+  async (req: Request, res: Response) => {
+    const data = await respondRequestAssignment(
+      p(req, "requestId"),
+      req.user!.userId,
+      req.body,
+    );
+    sendSuccess(res, { data });
+  },
+);
+
+organizerProjectsRouter.patch(
+  "/projects/:projectId/assignment-response",
+  validate(respondProjectAssignmentSchema),
+  async (req: Request, res: Response) => {
+    const data = await respondProjectAssignment(
+      p(req, "projectId"),
+      req.user!.userId,
+      req.body,
+    );
+    sendSuccess(res, { data });
+  },
+);
 
 // GET /api/organizer/projects/:projectId/kanban
 organizerProjectsRouter.get("/projects/:projectId/kanban", async (req: Request, res: Response) => {

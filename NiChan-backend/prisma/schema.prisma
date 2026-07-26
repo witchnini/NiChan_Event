@@ -41,17 +41,18 @@ model User {
   taskHistories     TaskStatusHistory[]
   staffAssignments  EventStaffAssignment[]
   shifts            ShiftSchedule[]
-  createdContracts  Contract[]            @relation("ContractCreator")
-  customerContracts Contract[]            @relation("ContractCustomer")
-  uploadedDocuments Document[]
-  approvedReviews   Review[]              @relation("ReviewApprover")
-  customerReviews   Review[]              @relation("CustomerReview")
-  chatMessages      ChatMessage[]
-  chatMemberships   ChatThreadMember[]
-  notifications     Notification[]
-  blogPostsCreated  BlogPost[]            @relation("BlogCreator")
-  blogPostsUpdated  BlogPost[]            @relation("BlogUpdater")
-  eventActivities   EventActivity[]
+  createdContracts    Contract[]            @relation("ContractCreator")
+  customerContracts  Contract[]            @relation("ContractCustomer")
+  uploadedDocuments  Document[]
+  approvedReviews    Review[]              @relation("ReviewApprover")
+  customerReviews    Review[]              @relation("CustomerReview")
+  chatMessages       ChatMessage[]
+  chatMemberships    ChatThreadMember[]
+  notifications      Notification[]
+  blogPostsCreated   BlogPost[]            @relation("BlogCreator")
+  blogPostsUpdated   BlogPost[]            @relation("BlogUpdater")
+  eventActivities    EventActivity[]
+  settlementFeedbacks SettlementFeedback[]
   verificationTokens EmailVerificationToken[]
   passwordResetTokens PasswordResetToken[]
 
@@ -240,6 +241,9 @@ model ConsultationRequest {
   note              String?
   status            String    @default("new") // new | reviewing | quoted | confirmed | rejected
   assignedManagerId String?
+  organizerRequestStatus          String?   // pending | accepted | rejected
+  organizerRequestRejectionReason String?
+  organizerRequestRespondedAt     DateTime?
   customerUserId    String?
   quotedAt          DateTime?
   confirmedAt       DateTime?
@@ -264,6 +268,9 @@ model Event {
   status                String    @default("draft") // draft|planning|quoted|contracted|in_progress|completed|cancelled
   customerUserId        String
   organizerUserId       String?
+  organizerAssignmentStatus String?   // pending | accepted | rejected
+  organizerRejectionReason  String?
+  organizerRespondedAt      DateTime?
   consultationRequestId String?
   eventDate             DateTime?
   locationText          String?
@@ -293,6 +300,7 @@ model Event {
   chatThreads      ChatThread[]
   portfolioItems   PortfolioItem[]
   shifts           ShiftSchedule[]
+  paymentOrders    PaymentOrder[]
 
   @@map("events")
 }
@@ -470,9 +478,11 @@ model Contract {
   event        Event             @relation(fields: [eventId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customerUser User              @relation("ContractCustomer", fields: [customerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   createdBy    User              @relation("ContractCreator", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  versions     ContractVersion[]
-  documents    Document[]
-  transactions Transaction[]
+  versions            ContractVersion[]
+  documents           Document[]
+  transactions        Transaction[]
+  settlementFeedbacks SettlementFeedback[]
+  paymentOrders       PaymentOrder[]
 
   @@map("contracts")
 }
@@ -509,7 +519,8 @@ model ContractLineItem {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  contractVersion ContractVersion @relation(fields: [contractVersionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contractVersion     ContractVersion      @relation(fields: [contractVersionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  settlementFeedbacks SettlementFeedback[]
 
   @@map("contract_line_items")
 }
@@ -541,12 +552,42 @@ model Transaction {
   transactionDate DateTime
   paymentMethod   String?  
   status          String   @default("pending") // pending|completed|cancelled
+  sepayTransId    Int?     @unique            // SePay transaction ID (chống trùng)
+  referenceCode   String?                     // Mã tham chiếu ngân hàng
+  gateway         String?                     // Tên ngân hàng (từ SePay)
+  paymentOrderId  String?
   createdAt       DateTime @default(now())
 
-  event    Event?    @relation(fields: [eventId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  contract Contract? @relation(fields: [contractId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  event        Event?         @relation(fields: [eventId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  contract     Contract?      @relation(fields: [contractId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  paymentOrder PaymentOrder?  @relation(fields: [paymentOrderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("transactions")
+}
+
+// ─── Payment Orders (SePay Integration) ───────────────────────────────────────
+
+model PaymentOrder {
+  id              String    @id @default(uuid())
+  orderCode       String    @unique           // Mã thanh toán unique (nội dung CK)
+  eventId         String?
+  contractId      String?
+  type            String                      // deposit | contract_payment | installment
+  amount          Decimal
+  status          String    @default("pending") // pending | completed | expired | cancelled
+  description     String
+  qrContent       String?                     // Nội dung chuyển khoản để SePay match
+  sepayTransId    Int?      @unique           // SePay transaction ID (chống trùng)
+  paidAt          DateTime?
+  expiredAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  event        Event?        @relation(fields: [eventId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  contract     Contract?     @relation(fields: [contractId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transactions Transaction[]
+
+  @@map("payment_orders")
 }
 
 // ─── Budget ───────────────────────────────────────────────────────────────────
@@ -694,4 +735,22 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("notifications")
+}
+
+model SettlementFeedback {
+  id                 String   @id @default(uuid())
+  contractLineItemId String
+  contractId         String
+  customerId         String
+  status             String   @default("pending") // pending | agreed | feedback
+  feedbackNote       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  contractLineItem ContractLineItem @relation(fields: [contractLineItemId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  contract         Contract         @relation(fields: [contractId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  customer         User             @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([contractLineItemId, customerId])
+  @@map("settlement_feedbacks")
 }

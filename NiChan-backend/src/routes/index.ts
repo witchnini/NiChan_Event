@@ -34,8 +34,12 @@ import { adminReportsRouter } from "../modules/reports/reports.router";
 // Shared Profiles
 import { makeProfileRouter } from "../modules/shared/profile.router";
 import { uploadRouter } from "../modules/shared/upload.router";
+import { webhookRouter, customerPaymentRouter, organizerPaymentRouter } from "../modules/shared/payment.router";
 
 export const apiRouter = Router();
+
+// ─── Webhooks (no JWT required) ───────────────────────────────────────────────
+apiRouter.use("/webhooks", webhookRouter);
 
 // ─── Foundation ───────────────────────────────────────────────────────────────
 apiRouter.use("/", foundationRouter);
@@ -50,6 +54,7 @@ apiRouter.use("/public", consultationRouter);
 // ─── Customer ─────────────────────────────────────────────────────────────────
 apiRouter.use("/customer", customerRouter);
 apiRouter.use("/customer", makeProfileRouter("customer", "admin"));
+apiRouter.use("/customer/payments", customerPaymentRouter);
 
 // ─── Organizer ────────────────────────────────────────────────────────────────
 apiRouter.use("/organizer", organizerDashboardRouter);
@@ -60,6 +65,7 @@ apiRouter.use("/organizer", organizerReportsRouter);
 apiRouter.use("/organizer", organizerCommunicationRouter);
 apiRouter.use("/organizer/staff", organizerStaffRouter);
 apiRouter.use("/organizer", makeProfileRouter("organizer", "admin"));
+apiRouter.use("/organizer/payments", organizerPaymentRouter);
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 apiRouter.use("/admin", adminDashboardRouter);

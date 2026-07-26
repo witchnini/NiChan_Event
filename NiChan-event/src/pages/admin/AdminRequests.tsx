@@ -27,6 +27,9 @@ type RequestItem = {
   note?: string | null;
   assignedManagerId?: string | null;
   assignedManager?: { id: string; displayName: string } | null;
+  organizerRequestStatus?: "pending" | "accepted" | "rejected" | null;
+  organizerRequestRejectionReason?: string | null;
+  organizerRequestRespondedAt?: string | null;
   _count?: { events?: number };
 };
 
@@ -35,6 +38,18 @@ type Manager = { id: string; displayName: string; email: string };
 const statuses = requestStatusFilters;
 const statusLabel = requestStatusLabels;
 const statusColors = requestStatusColors;
+
+const organizerRequestLabel: Record<string, string> = {
+  pending: "Chờ organizer duyệt",
+  accepted: "Organizer đã nhận",
+  rejected: "Organizer từ chối",
+};
+
+const organizerRequestClass: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-700",
+  accepted: "bg-emerald-100 text-emerald-700",
+  rejected: "bg-red-100 text-red-700",
+};
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof ApiException) {
@@ -120,7 +135,7 @@ const AdminRequests = () => {
       setSelectedManager("");
       await loadRequests();
     } catch (error) {
-      toast.error("Phân công thất bại, vui lòng thử lại");
+      toast.error(getApiErrorMessage(error, "Phân công thất bại, vui lòng thử lại"));
     }
   };
 
@@ -260,10 +275,25 @@ const AdminRequests = () => {
                   {req.budgetRange || "—"}
                 </TableCell>
                 <TableCell className="font-body text-sm">
-                  {req.assignedManager
-                    ? <span className="text-foreground">{req.assignedManager.displayName}</span>
-                    : <span className="text-muted-foreground italic text-xs">Chưa phân công</span>
-                  }
+                  {req.assignedManager ? (
+                    <div className="space-y-1">
+                      <span className="text-foreground">{req.assignedManager.displayName}</span>
+                      {req.organizerRequestStatus && (
+                        <div>
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${organizerRequestClass[req.organizerRequestStatus] ?? "bg-muted text-muted-foreground"}`}>
+                            {organizerRequestLabel[req.organizerRequestStatus] ?? req.organizerRequestStatus}
+                          </span>
+                        </div>
+                      )}
+                      {req.organizerRequestStatus === "rejected" && req.organizerRequestRejectionReason && (
+                        <p className="line-clamp-2 text-xs text-destructive">
+                          {req.organizerRequestRejectionReason}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-muted-foreground italic text-xs">Chưa phân công</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-body font-semibold ${statusColors[req.status] ?? "bg-muted text-muted-foreground"}`}>

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Ban, CheckCircle, ChevronRight, Circle, Clock, Filter, ListChecks, MessageSquare, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards, ClipboardCheck, ReceiptText, X, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle, ChevronRight, Circle, Clock, Filter, ListChecks, MessageSquare, MessageCircle, FileText, CreditCard, ArrowLeft, Paperclip, Send, Download, Trash2, Eye, WalletCards, ClipboardCheck, ReceiptText, ThumbsUp, ThumbsDown, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -99,6 +99,20 @@ type FeedbackPanelState = {
   mode: "cancelled" | "rejected";
 };
 
+type SettlementItemFeedback = {
+  lineItemId: string;
+  status: "agreed" | "feedback" | "pending";
+  note: string;
+};
+
+type SavedFeedback = {
+  id: string;
+  contractLineItemId: string;
+  status: string;
+  feedbackNote: string | null;
+  updatedAt: string;
+};
+
 const getNextScheduledTransaction = (items: Transaction[], contractId: string) =>
   items
     .filter(
@@ -161,6 +175,14 @@ const EventTracking = () => {
   const [contractResponding, setContractResponding] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState<string | null>(null);
   const [rejectionNote, setRejectionNote] = useState("");
+  const [settlementFeedbacks, setSettlementFeedbacks] = useState<Record<string, SettlementItemFeedback>>({});
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackLoaded, setFeedbackLoaded] = useState(false);
+  const [expandedFeedback, setExpandedFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [id]);
 
   const load = async () => {
     if (!id) return;
@@ -293,6 +315,102 @@ const EventTracking = () => {
   );
 
   const hasLiquidatedContract = contractSummaries.some((c) => c.status === "liquidated");
+
+  // Load existing settlement feedbacks when switching to settlement tab
+  useEffect(() => {
+    if (activeTab !== "settlement" || feedbackLoaded || contractSummaries.length === 0) return;
+    const loadFeedbacks = async () => {
+      try {
+        const allFeedbacks: Record<string, SettlementItemFeedback> = {};
+        for (const contract of contractSummaries) {
+          const saved = await apiClient.get<SavedFeedback[]>(
+            `/customer/contracts/${contract.id}/settlement-feedback`,
+          );
+          for (const fb of saved) {
+            allFeedbacks[fb.contractLineItemId] = {
+              lineItemId: fb.contractLineItemId,
+              status: fb.status as SettlementItemFeedback["status"],
+              note: fb.feedbackNote || "",
+            };
+          }
+        }
+        setSettlementFeedbacks(allFeedbacks);
+        setFeedbackLoaded(true);
+      } catch {
+        // Silently fail — feedbacks are optional
+      }
+    };
+    void loadFeedbacks();
+  }, [activeTab, feedbackLoaded, contractSummaries]);
+
+  const setItemFeedback = (lineItemId: string, status: SettlementItemFeedback["status"], note?: string) => {
+    setSettlementFeedbacks((prev) => ({
+      ...prev,
+      [lineItemId]: {
+        lineItemId,
+        status,
+        note: note ?? prev[lineItemId]?.note ?? "",
+      },
+    }));
+  };
+
+  const updateFeedbackNote = (lineItemId: string, note: string) => {
+    setSettlementFeedbacks((prev) => ({
+      ...prev,
+      [lineItemId]: {
+        ...prev[lineItemId],
+        lineItemId,
+        status: prev[lineItemId]?.status ?? "feedback",
+        note,
+      },
+    }));
+  };
+
+  const handleSubmitSettlementFeedback = async () => {
+    const items = settlementLineItems
+      .filter((item) => item.id && settlementFeedbacks[item.id]?.status && settlementFeedbacks[item.id].status !== "pending")
+      .map((item) => ({
+        lineItemId: item.id!,
+        status: settlementFeedbacks[item.id!].status as "agreed" | "feedback",
+        note: settlementFeedbacks[item.id!].note || undefined,
+      }));
+
+    if (items.length === 0) {
+      toast.error("Vui lòng chọn đồng ý hoặc feedback cho ít nhất một hạng mục.");
+      return;
+    }
+
+    // Find the contract to submit to
+    const contractId = contractSummaries.find((c) => c.status === "active" || c.status === "liquidated")?.id;
+    if (!contractId) {
+      toast.error("Không tìm thấy hợp đồng để nghiệm thu.");
+      return;
+    }
+
+    setFeedbackSubmitting(true);
+    try {
+      await apiClient.post(`/customer/contracts/${contractId}/settlement-feedback`, { items });
+      const feedbackCount = items.filter((i) => i.status === "feedback").length;
+      toast.success(
+        feedbackCount > 0
+          ? `Đã gửi nghiệm thu: ${items.length - feedbackCount} đồng ý, ${feedbackCount} cần xem lại.`
+          : "Đã đồng ý tất cả hạng mục. Cảm ơn bạn!",
+      );
+      setExpandedFeedback(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gửi nghiệm thu thất bại.");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const feedbackStats = useMemo(() => {
+    const total = settlementLineItems.filter((i) => i.id).length;
+    const agreed = settlementLineItems.filter((i) => i.id && settlementFeedbacks[i.id]?.status === "agreed").length;
+    const feedback = settlementLineItems.filter((i) => i.id && settlementFeedbacks[i.id]?.status === "feedback").length;
+    const pending = total - agreed - feedback;
+    return { total, agreed, feedback, pending };
+  }, [settlementLineItems, settlementFeedbacks]);
 
   const taskStats = useMemo(() => {
     const total = detailedTasks.length;
@@ -1054,12 +1172,33 @@ const EventTracking = () => {
             </div>
 
             <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
-              <div className="flex items-center gap-3 mb-4">
-                <ReceiptText size={18} className="text-primary" />
-                <h3 className="font-serif text-headline-md text-foreground">Hạng mục dịch vụ đã chốt</h3>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <ReceiptText size={18} className="text-primary" />
+                  <h3 className="font-serif text-headline-md text-foreground">Hạng mục dịch vụ đã chốt</h3>
+                </div>
+                {feedbackStats.total > 0 && (
+                  <div className="flex items-center gap-2 font-body text-xs">
+                    {feedbackStats.agreed > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-secondary/10 text-secondary font-semibold">
+                        <ThumbsUp size={12} /> {feedbackStats.agreed}
+                      </span>
+                    )}
+                    {feedbackStats.feedback > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-destructive/10 text-destructive font-semibold">
+                        <ThumbsDown size={12} /> {feedbackStats.feedback}
+                      </span>
+                    )}
+                    {feedbackStats.pending > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-muted text-muted-foreground font-semibold">
+                        <Circle size={12} /> {feedbackStats.pending}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="overflow-x-auto rounded-lg border border-border">
-                <table className="min-w-[760px] w-full text-sm font-body">
+                <table className="min-w-[900px] w-full text-sm font-body">
                   <thead className="bg-surface-low">
                     <tr>
                       <th className="px-3 py-2 text-left text-muted-foreground font-semibold">Hợp đồng</th>
@@ -1068,6 +1207,7 @@ const EventTracking = () => {
                       <th className="px-3 py-2 text-center text-muted-foreground font-semibold">Đơn vị</th>
                       <th className="px-3 py-2 text-right text-muted-foreground font-semibold">Đơn giá</th>
                       <th className="px-3 py-2 text-right text-muted-foreground font-semibold">Thành tiền</th>
+                      <th className="px-3 py-2 text-center text-muted-foreground font-semibold">Nghiệm thu</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1075,23 +1215,113 @@ const EventTracking = () => {
                       const quantity = Number(item.quantity || 0);
                       const unitPrice = Number(item.unitPrice || 0);
                       const amount = Number(item.amount ?? quantity * unitPrice);
+                      const itemId = item.id ?? `${item.contractCode}-${index}`;
+                      const fb = item.id ? settlementFeedbacks[item.id] : undefined;
+                      const fbStatus = fb?.status ?? "pending";
+                      const isExpanded = expandedFeedback === itemId;
                       return (
-                        <tr key={item.id ?? `${item.contractCode}-${index}`} className="border-t border-border">
-                          <td className="px-3 py-3 text-primary font-semibold">{item.contractCode}</td>
-                          <td className="px-3 py-3">
-                            <p className="font-semibold text-foreground">{item.category}</p>
-                            {item.description && <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>}
-                          </td>
-                          <td className="px-3 py-3 text-center text-foreground">{quantity.toLocaleString("vi-VN")}</td>
-                          <td className="px-3 py-3 text-center text-foreground">{item.unit || "-"}</td>
-                          <td className="px-3 py-3 text-right text-foreground">{money(unitPrice)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-foreground">{money(amount)}</td>
-                        </tr>
+                        <Fragment key={itemId}>
+                          <tr className={`border-t border-border transition-colors ${
+                            fbStatus === "agreed" ? "bg-secondary/5" : fbStatus === "feedback" ? "bg-destructive/5" : ""
+                          }`}>
+                            <td className="px-3 py-3 text-primary font-semibold">{item.contractCode}</td>
+                            <td className="px-3 py-3">
+                              <p className="font-semibold text-foreground">{item.category}</p>
+                              {item.description && <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>}
+                            </td>
+                            <td className="px-3 py-3 text-center text-foreground">{quantity.toLocaleString("vi-VN")}</td>
+                            <td className="px-3 py-3 text-center text-foreground">{item.unit || "-"}</td>
+                            <td className="px-3 py-3 text-right text-foreground">{money(unitPrice)}</td>
+                            <td className="px-3 py-3 text-right font-semibold text-foreground">{money(amount)}</td>
+                            <td className="px-3 py-3">
+                              {item.id ? (
+                                <div className="flex flex-col items-center gap-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      title="Đồng ý"
+                                      onClick={() => { setItemFeedback(item.id!, "agreed"); setExpandedFeedback(null); }}
+                                      className={`p-1.5 rounded-lg transition-all ${
+                                        fbStatus === "agreed"
+                                          ? "bg-secondary text-secondary-foreground shadow-sm scale-110"
+                                          : "bg-surface-low text-muted-foreground hover:bg-secondary/20 hover:text-secondary"
+                                      }`}
+                                    >
+                                      <ThumbsUp size={14} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="Feedback"
+                                      onClick={() => {
+                                        setItemFeedback(item.id!, "feedback");
+                                        setExpandedFeedback(isExpanded ? null : itemId);
+                                      }}
+                                      className={`p-1.5 rounded-lg transition-all ${
+                                        fbStatus === "feedback"
+                                          ? "bg-destructive text-destructive-foreground shadow-sm scale-110"
+                                          : "bg-surface-low text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                                      }`}
+                                    >
+                                      <ThumbsDown size={14} />
+                                    </button>
+                                  </div>
+                                  {fbStatus === "feedback" && fb?.note && !isExpanded && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedFeedback(itemId)}
+                                      className="flex items-center gap-1 text-[11px] text-destructive hover:underline"
+                                    >
+                                      <MessageCircle size={10} /> Xem ghi chú
+                                    </button>
+                                  )}
+                                  {fbStatus === "agreed" && (
+                                    <span className="text-[11px] text-secondary font-semibold">Đồng ý</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          </tr>
+                          {/* Inline feedback textarea — renders right below this item's row */}
+                          {isExpanded && item.id && (
+                            <tr className="border-t border-destructive/20 bg-destructive/5">
+                              <td colSpan={7} className="px-4 py-3">
+                                <div className="flex items-start gap-3">
+                                  <MessageCircle size={16} className="mt-1 shrink-0 text-destructive" />
+                                  <div className="flex-1 space-y-2">
+                                    <p className="font-body text-xs font-semibold text-destructive">
+                                      Feedback cho: {item.category}
+                                    </p>
+                                    <Textarea
+                                      value={settlementFeedbacks[item.id]?.note ?? ""}
+                                      onChange={(e) => updateFeedbackNote(item.id!, e.target.value)}
+                                      placeholder="Nhập lý do không đồng ý (VD: Số lượng không đúng, giá cao hơn thỏa thuận...)"
+                                      className="resize-none rounded-lg border-destructive/20 bg-background font-body text-sm min-h-[72px]"
+                                      rows={2}
+                                      autoFocus
+                                    />
+                                    <div className="flex justify-end">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-xs"
+                                        onClick={() => setExpandedFeedback(null)}
+                                      >
+                                        Thu gọn
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                     {settlementLineItems.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                        <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
                           Chưa có bảng hạng mục báo giá trong hợp đồng.
                         </td>
                       </tr>
@@ -1099,6 +1329,28 @@ const EventTracking = () => {
                   </tbody>
                 </table>
               </div>
+              {settlementLineItems.length > 0 && settlementLineItems.some((i) => i.id) && (
+                <div className="mt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-lg bg-surface-low">
+                  <div className="font-body text-sm text-muted-foreground">
+                    {feedbackStats.pending > 0 ? (
+                      <span>Còn <span className="font-semibold text-foreground">{feedbackStats.pending}</span> hạng mục chưa nghiệm thu</span>
+                    ) : feedbackStats.feedback > 0 ? (
+                      <span className="text-destructive">Có <span className="font-semibold">{feedbackStats.feedback}</span> hạng mục cần admin xem lại</span>
+                    ) : (
+                      <span className="text-secondary font-semibold">✓ Đã đồng ý tất cả hạng mục</span>
+                    )}
+                  </div>
+                  <Button
+                    variant="hero"
+                    onClick={handleSubmitSettlementFeedback}
+                    disabled={feedbackSubmitting || feedbackStats.agreed + feedbackStats.feedback === 0}
+                    className="shrink-0"
+                  >
+                    <ClipboardCheck size={16} />
+                    {feedbackSubmitting ? "Đang gửi..." : "Gửi nghiệm thu"}
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">

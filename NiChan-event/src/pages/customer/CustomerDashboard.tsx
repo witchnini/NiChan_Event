@@ -3,17 +3,25 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Calendar, FileText, CreditCard, Clock, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import CustomerEventCard from "@/components/features/customer/CustomerEventCard";
 import { apiClient } from "@/services/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { getEventDisplayName, getEventStatusLabel, eventStatusColors } from "@/lib/eventDisplay";
+import {
+  getEventDisplayName,
+  getEventStatusLabel,
+  eventStatusColors,
+  getRequestStatusColor,
+  getRequestStatusLabel,
+  parseEventNameFromNote,
+} from "@/lib/eventDisplay";
 
 type DashboardEvent = {
   id: string;
   name: string;
   type: string;
   eventDate?: string | null;
+  note?: string | null;
   status: string;
   progressPercent?: number | null;
   organizerUser?: { displayName: string } | null;
@@ -22,9 +30,24 @@ type DashboardEvent = {
 };
 type DashboardContract = { id: string; status: string; totalValue?: string | number | null };
 type Transaction = { id: string; amount: string | number; status: string };
+type DashboardRequest = {
+  id: string;
+  requestCode: string;
+  eventType: string;
+  eventDate?: string | null;
+  locationText?: string | null;
+  guestCount?: number | null;
+  budgetRange?: string | null;
+  note?: string | null;
+  status: string;
+  createdAt: string;
+  assignedManager?: { displayName: string } | null;
+  events: { id: string }[];
+};
 
 type CustomerDashboardData = {
   events: DashboardEvent[];
+  requests: DashboardRequest[];
   contracts: DashboardContract[];
   transactions: Transaction[];
 };
@@ -33,7 +56,7 @@ const moneyShort = (value: number) => value >= 1_000_000 ? `${Math.round(value /
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
-  const [data, setData] = useState<CustomerDashboardData>({ events: [], contracts: [], transactions: [] });
+  const [data, setData] = useState<CustomerDashboardData>({ events: [], requests: [], contracts: [], transactions: [] });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -51,11 +74,12 @@ const CustomerDashboard = () => {
   }, []);
 
   const stats = useMemo(() => {
+    const pendingRequests = data.requests.filter(request => request.events.length === 0);
     const activeEvents = data.events.filter(e => e.status !== "completed" && e.status !== "cancelled").length;
     const paid = data.transactions.filter(t => t.status === "completed").reduce((sum, t) => sum + Number(t.amount || 0), 0);
     return [
-      { label: "Sự kiện", value: String(data.events.length), icon: Calendar, color: "text-primary" },
-      { label: "Đang chuẩn bị", value: String(activeEvents), icon: Clock, color: "text-secondary" },
+      { label: "Sự kiện", value: String(data.events.length + pendingRequests.length), icon: Calendar, color: "text-primary" },
+      { label: "Đang chuẩn bị", value: String(activeEvents + pendingRequests.length), icon: Clock, color: "text-secondary" },
       { label: "Hợp đồng", value: String(data.contracts.length), icon: FileText, color: "text-primary" },
       { label: "Thanh toán", value: moneyShort(paid), icon: CreditCard, color: "text-secondary" },
     ];
@@ -97,29 +121,40 @@ const CustomerDashboard = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {data.requests.filter(request => request.events.length === 0).map((request, i) => {
+                const reviewProgress = 0;
+                return (
+                  <motion.div key={request.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.1 }}>
+                    <CustomerEventCard
+                      to={`/dashboard/yeu-cau/${request.id}`}
+                      title={parseEventNameFromNote(request.note) || request.eventType}
+                      statusLabel={getRequestStatusLabel(request.status)}
+                      statusClassName={getRequestStatusColor(request.status)}
+                      eventDate={request.eventDate}
+                      locationText={request.locationText}
+                      guestCount={request.guestCount}
+                      managerName={request.assignedManager?.displayName}
+                      progressPercent={reviewProgress}
+                      budget={request.budgetRange || undefined}
+                    />
+                  </motion.div>
+                );
+              })}
               {data.events.map((event, i) => (
                 <motion.div key={event.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 + i * 0.1 }}>
-                  <Link to={`/dashboard/su-kien/${event.id}`} className="block h-full bg-surface-lowest rounded-xl p-6 shadow-ambient hover:shadow-ambient-lg transition-shadow">
-                    <div className="flex items-start justify-between gap-4 mb-4">
-                      <div>
-                        <h3 className="font-serif text-headline-md text-foreground">{getEventDisplayName(event)}</h3>
-                        <p className="font-body text-sm text-muted-foreground mt-1">{event.type} - {event.eventDate ? new Date(event.eventDate).toLocaleDateString("vi-VN") : "-"}</p>
-                        <p className="font-body text-sm text-muted-foreground mt-1">Quản lý dự án: {event.organizerUser?.displayName ?? "Chưa phân công"}</p>
-                      </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-body font-semibold shrink-0 ${eventStatusColors[event.status] ?? "bg-muted text-muted-foreground"}`}>{getEventStatusLabel(event.status)}</span>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm font-body">
-                        <span className="text-muted-foreground">Tiến độ</span>
-                        <span className="text-foreground font-semibold">{event.progressPercent ?? 0}%</span>
-                      </div>
-                      <Progress value={event.progressPercent ?? 0} className="h-2" />
-                    </div>
-                  </Link>
+                  <CustomerEventCard
+                    to={`/dashboard/su-kien/${event.id}`}
+                    title={getEventDisplayName(event)}
+                    statusLabel={getEventStatusLabel(event.status)}
+                    statusClassName={eventStatusColors[event.status] ?? "bg-muted text-muted-foreground"}
+                    eventDate={event.eventDate}
+                    managerName={event.organizerUser?.displayName}
+                    progressPercent={event.progressPercent}
+                  />
                 </motion.div>
               ))}
             </div>
-            {data.events.length === 0 && <p className="font-body text-sm text-muted-foreground">Chưa có sự kiện nào.</p>}
+            {data.events.length === 0 && data.requests.every(request => request.events.length > 0) && <p className="font-body text-sm text-muted-foreground">Chưa có sự kiện nào.</p>}
           </div>
         </div>
       </section>
