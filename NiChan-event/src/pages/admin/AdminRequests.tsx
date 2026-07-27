@@ -9,7 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { ApiException, apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import { requestStatusLabels, requestStatusColors, requestStatusFilters } from "@/lib/eventDisplay";
+import {
+  organizerAssignmentColors,
+  organizerAssignmentLabels,
+  requestStatusLabels,
+  requestStatusColors,
+  requestStatusFilters,
+  statusBadgeClassName,
+} from "@/lib/eventDisplay";
 
 type RequestItem = {
   id: string;
@@ -49,18 +56,6 @@ type OrganizerAssignmentHistory = {
 const statuses = requestStatusFilters;
 const statusLabel = requestStatusLabels;
 const statusColors = requestStatusColors;
-
-const organizerRequestLabel: Record<string, string> = {
-  pending: "Chờ organizer duyệt",
-  accepted: "Organizer đã nhận",
-  rejected: "Organizer từ chối",
-};
-
-const organizerRequestClass: Record<string, string> = {
-  pending: "border border-primary/20 bg-primary/10 text-primary",
-  accepted: "border border-secondary/20 bg-secondary/10 text-secondary",
-  rejected: "border border-destructive/20 bg-destructive/10 text-destructive",
-};
 
 const assignmentHistoryLabel: Record<string, string> = {
   pending: "Đang chờ",
@@ -298,8 +293,8 @@ const AdminRequests = () => {
                       <span className="text-foreground">{req.assignedManager.displayName}</span>
                       {req.organizerRequestStatus && (
                         <div>
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${organizerRequestClass[req.organizerRequestStatus] ?? "bg-muted text-muted-foreground"}`}>
-                            {organizerRequestLabel[req.organizerRequestStatus] ?? req.organizerRequestStatus}
+                          <span className={`${statusBadgeClassName} ${organizerAssignmentColors[req.organizerRequestStatus] ?? "border-border bg-muted text-muted-foreground"}`}>
+                            {organizerAssignmentLabels[req.organizerRequestStatus] ?? req.organizerRequestStatus}
                           </span>
                         </div>
                       )}
@@ -466,8 +461,8 @@ const AdminRequests = () => {
                       <div key={item.id} className="rounded-xl border border-border bg-surface-low p-3">
                         <div className="flex items-center justify-between gap-3">
                           <p className="font-semibold text-foreground">{item.organizer.displayName}</p>
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                            organizerRequestClass[item.status] ?? "bg-muted text-muted-foreground"
+                          <span className={`${statusBadgeClassName} ${
+                            organizerAssignmentColors[item.status] ?? "border-border bg-muted text-muted-foreground"
                           }`}>
                             {assignmentHistoryLabel[item.status] ?? item.status}
                           </span>

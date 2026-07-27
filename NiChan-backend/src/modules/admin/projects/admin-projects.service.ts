@@ -42,14 +42,6 @@ export const listAdminProjects = async (filters: {
     ...(filters.contractEligible
       ? {
           status: { not: "cancelled" },
-          consultationRequest: { status: { not: "rejected" } },
-          OR: [
-            { status: "in_progress" },
-            {
-              organizerUserId: { not: null },
-              organizerAssignmentStatus: "accepted",
-            },
-          ],
         }
       : {
           consultationRequest: {

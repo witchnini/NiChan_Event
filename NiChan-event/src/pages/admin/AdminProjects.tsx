@@ -16,7 +16,15 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
-import { eventStatusLabels, eventStatusColors, eventStatusFilters, getEventStatusLabel } from "@/lib/eventDisplay";
+import {
+  eventStatusLabels,
+  eventStatusColors,
+  eventStatusFilters,
+  getEventStatusLabel,
+  organizerAssignmentColors,
+  organizerAssignmentLabels,
+  statusBadgeClassName,
+} from "@/lib/eventDisplay";
 
 type Project = {
   id: string;
@@ -445,26 +453,20 @@ const AdminProjects = () => {
                     <p className="min-w-0 font-body text-xs text-muted-foreground truncate">
                       {getProjectCustomerName(project)} - {formatDate(project.eventDate)}
                     </p>
-                    <span className={`shrink-0 whitespace-nowrap px-2 py-1 rounded-full text-[11px] font-body font-semibold ${statusColors[project.status] ?? "bg-muted text-muted-foreground"}`}>
+                    <span className={`${statusBadgeClassName} shrink-0 ${statusColors[project.status] ?? "bg-muted text-muted-foreground"}`}>
                       {statusLabel[project.status] ?? project.status}
                     </span>
                   </div>
                   {project.status !== "cancelled" && project.organizerAssignmentStatus && (
                     <div className="mt-2">
                       <span
-                        className={`inline-flex rounded-full px-2 py-1 text-[11px] font-body font-semibold ${
-                          project.organizerAssignmentStatus === "accepted"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : project.organizerAssignmentStatus === "rejected"
-                              ? "bg-red-100 text-red-700"
-                              : "bg-amber-100 text-amber-700"
+                        className={`${statusBadgeClassName} ${
+                          organizerAssignmentColors[project.organizerAssignmentStatus] ??
+                          "border-border bg-muted text-muted-foreground"
                         }`}
                       >
-                        {project.organizerAssignmentStatus === "accepted"
-                          ? "Organizer đã chấp nhận"
-                          : project.organizerAssignmentStatus === "rejected"
-                            ? "Organizer đã từ chối"
-                            : "Đang chờ organizer phản hồi"}
+                        {organizerAssignmentLabels[project.organizerAssignmentStatus] ??
+                          project.organizerAssignmentStatus}
                       </span>
                     </div>
                   )}

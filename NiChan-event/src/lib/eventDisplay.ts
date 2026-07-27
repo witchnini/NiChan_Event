@@ -79,6 +79,21 @@ export const eventStatusColors: Record<string, string> = {
 export const getEventStatusColor = (status?: string | null) =>
   status ? eventStatusColors[status] ?? "bg-muted text-muted-foreground" : "bg-muted text-muted-foreground";
 
+export const statusBadgeClassName =
+  "inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 font-body text-[11px] font-semibold leading-none";
+
+export const organizerAssignmentLabels: Record<string, string> = {
+  pending: "Chờ organizer duyệt",
+  accepted: "Organizer đã nhận",
+  rejected: "Organizer từ chối",
+};
+
+export const organizerAssignmentColors: Record<string, string> = {
+  pending: "border-primary/20 bg-primary/10 text-primary",
+  accepted: "border-secondary/20 bg-secondary/10 text-secondary",
+  rejected: "border-destructive/20 bg-destructive/10 text-destructive",
+};
+
 export const eventStatusFilters = [
   { value: "all", label: "Tất cả" },
   { value: "contracted", label: "Đã xác nhận" },
