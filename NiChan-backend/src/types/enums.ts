@@ -20,6 +20,8 @@ export const RequestStatus = {
   REVIEWING: "reviewing",
   QUOTED: "quoted",
   CONFIRMED: "confirmed",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled",
   REJECTED: "rejected",
 } as const;
 export type RequestStatus = (typeof RequestStatus)[keyof typeof RequestStatus];
@@ -29,6 +31,8 @@ const requestStatuses: RequestStatus[] = [
   RequestStatus.REVIEWING,
   RequestStatus.QUOTED,
   RequestStatus.CONFIRMED,
+  RequestStatus.COMPLETED,
+  RequestStatus.CANCELLED,
   RequestStatus.REJECTED,
 ];
 
@@ -38,6 +42,8 @@ export const REQUEST_STATUS_TRANSITIONS: Record<RequestStatus, RequestStatus[]> 
   reviewing: requestStatuses.filter((status) => status !== RequestStatus.REVIEWING),
   quoted: requestStatuses.filter((status) => status !== RequestStatus.QUOTED),
   confirmed: requestStatuses.filter((status) => status !== RequestStatus.CONFIRMED),
+  completed: requestStatuses.filter((status) => status !== RequestStatus.COMPLETED),
+  cancelled: requestStatuses.filter((status) => status !== RequestStatus.CANCELLED),
   rejected: requestStatuses.filter((status) => status !== RequestStatus.REJECTED),
 };
 

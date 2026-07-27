@@ -33,6 +33,7 @@ model User {
   staffProfile     StaffProfile?
 
   managedRequests   ConsultationRequest[] @relation("AssignedManager")
+  requestAssignmentHistories OrganizerRequestAssignmentHistory[]
   customerRequests  ConsultationRequest[] @relation("CustomerRequest")
   ownedEvents       Event[]               @relation("CustomerEvent")
   organizedEvents   Event[]               @relation("OrganizerEvent")
@@ -239,7 +240,7 @@ model ConsultationRequest {
   budgetRange       String?
   locationText      String?
   note              String?
-  status            String    @default("new") // new | reviewing | quoted | confirmed | rejected
+  status            String    @default("new") // new | reviewing | quoted | confirmed | completed | cancelled | rejected
   assignedManagerId String?
   organizerRequestStatus          String?   // pending | accepted | rejected
   organizerRequestRejectionReason String?
@@ -254,8 +255,26 @@ model ConsultationRequest {
   assignedManager User?  @relation("AssignedManager", fields: [assignedManagerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   customerUser    User?  @relation("CustomerRequest", fields: [customerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   events          Event[]
+  assignmentHistory OrganizerRequestAssignmentHistory[]
 
   @@map("consultation_requests")
+}
+
+model OrganizerRequestAssignmentHistory {
+  id              String    @id @default(uuid())
+  requestId       String
+  organizerUserId String
+  status          String    @default("pending") // pending | accepted | rejected | reassigned
+  rejectionReason String?
+  assignedAt      DateTime  @default(now())
+  respondedAt     DateTime?
+
+  request   ConsultationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  organizer User                @relation(fields: [organizerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([requestId, assignedAt])
+  @@index([organizerUserId, status])
+  @@map("organizer_request_assignment_history")
 }
 
 // ─── Events ───────────────────────────────────────────────────────────────────

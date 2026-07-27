@@ -30,10 +30,21 @@ type RequestItem = {
   organizerRequestStatus?: "pending" | "accepted" | "rejected" | null;
   organizerRequestRejectionReason?: string | null;
   organizerRequestRespondedAt?: string | null;
+  assignmentHistory?: OrganizerAssignmentHistory[];
   _count?: { events?: number };
 };
 
 type Manager = { id: string; displayName: string; email: string };
+
+type OrganizerAssignmentHistory = {
+  id: string;
+  organizerUserId: string;
+  status: "pending" | "accepted" | "rejected" | "reassigned";
+  rejectionReason?: string | null;
+  assignedAt: string;
+  respondedAt?: string | null;
+  organizer: { id: string; displayName: string };
+};
 
 const statuses = requestStatusFilters;
 const statusLabel = requestStatusLabels;
@@ -46,9 +57,16 @@ const organizerRequestLabel: Record<string, string> = {
 };
 
 const organizerRequestClass: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-700",
-  accepted: "bg-emerald-100 text-emerald-700",
-  rejected: "bg-red-100 text-red-700",
+  pending: "border border-primary/20 bg-primary/10 text-primary",
+  accepted: "border border-secondary/20 bg-secondary/10 text-secondary",
+  rejected: "border border-destructive/20 bg-destructive/10 text-destructive",
+};
+
+const assignmentHistoryLabel: Record<string, string> = {
+  pending: "Đang chờ",
+  accepted: "Đã nhận",
+  rejected: "Đã từ chối",
+  reassigned: "Đã phân công lại",
 };
 
 const getApiErrorMessage = (error: unknown, fallback: string) => {
@@ -347,15 +365,15 @@ const AdminRequests = () => {
 
       {/* Dialog xem chi tiết */}
       <Dialog open={!!viewItem} onOpenChange={() => setViewItem(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-lg">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="font-serif">
               Chi tiết yêu cầu{" "}
               <span className="text-primary">{viewItem?.requestCode}</span>
             </DialogTitle>
           </DialogHeader>
           {viewItem && (
-            <div className="space-y-5 font-body text-sm">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-2 font-body text-sm">
               {/* Thông tin khách hàng */}
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Thông tin khách hàng</p>
@@ -437,9 +455,42 @@ const AdminRequests = () => {
                   </div>
                 </div>
               )}
+
+              {(viewItem.assignmentHistory?.length ?? 0) > 0 && (
+                <div className="border-t border-border/50 pt-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Lịch sử phân công organizer
+                  </p>
+                  <div className="space-y-2">
+                    {viewItem.assignmentHistory!.map((item) => (
+                      <div key={item.id} className="rounded-xl border border-border bg-surface-low p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-foreground">{item.organizer.displayName}</p>
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                            organizerRequestClass[item.status] ?? "bg-muted text-muted-foreground"
+                          }`}>
+                            {assignmentHistoryLabel[item.status] ?? item.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Phân công {new Date(item.assignedAt).toLocaleString("vi-VN")}
+                          {item.respondedAt
+                            ? ` · Phản hồi ${new Date(item.respondedAt).toLocaleString("vi-VN")}`
+                            : ""}
+                        </p>
+                        {item.rejectionReason && (
+                          <p className="mt-1 text-xs text-destructive">
+                            Lý do: {item.rejectionReason}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-          <DialogFooter className="gap-2 mt-2">
+          <DialogFooter className="mt-2 shrink-0 gap-2">
             <Button variant="outline" onClick={() => setViewItem(null)}>Đóng</Button>
             <Button variant="hero" onClick={() => { setAssignItem(viewItem); setViewItem(null); }}>
               <UserPlus size={14} className="mr-1.5" /> Phân công
@@ -485,17 +536,42 @@ const AdminRequests = () => {
                 <SelectContent>
                   {managers.length === 0
                     ? <SelectItem value="__empty__" disabled>Không có quản lý nào</SelectItem>
-                    : managers.map(m => (
+                    : managers.map(m => {
+                      const rejectedBefore = assignItem?.assignmentHistory?.some(
+                        (item) => item.organizerUserId === m.id && item.status === "rejected",
+                      );
+                      return (
                         <SelectItem key={m.id} value={m.id}>
                           <div className="flex flex-col">
-                            <span>{m.displayName}</span>
+                            <span>
+                              {m.displayName}
+                              {rejectedBefore ? " · Đã từng từ chối" : ""}
+                            </span>
                             <span className="text-xs text-muted-foreground">{m.email}</span>
                           </div>
                         </SelectItem>
-                      ))
+                      );
+                    })
                   }
                 </SelectContent>
               </Select>
+              {selectedManager && assignItem?.assignmentHistory?.some(
+                (item) => item.organizerUserId === selectedManager && item.status === "rejected",
+              ) && (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  Organizer này đã từng từ chối yêu cầu. Bạn vẫn có thể phân công lại nếu organizer đã đổi ý.
+                  {(() => {
+                    const latestRejection = assignItem.assignmentHistory?.find(
+                      (item) =>
+                        item.organizerUserId === selectedManager &&
+                        item.status === "rejected",
+                    );
+                    return latestRejection?.rejectionReason
+                      ? ` Lý do trước đó: ${latestRejection.rejectionReason}`
+                      : "";
+                  })()}
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter className="gap-2 mt-2">

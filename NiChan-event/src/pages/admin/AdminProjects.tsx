@@ -424,15 +424,17 @@ const AdminProjects = () => {
                       {projectName}
                     </p>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openProjectNameEdit(project)}
-                    className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-surface-low hover:text-foreground"
-                    title="Sửa tên dự án"
-                    aria-label={`Sửa tên dự án ${projectName}`}
-                  >
-                    <Edit2 size={14} />
-                  </button>
+                  {project.status !== "cancelled" && (
+                    <button
+                      type="button"
+                      onClick={() => openProjectNameEdit(project)}
+                      className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-surface-low hover:text-foreground"
+                      title="Sửa tên dự án"
+                      aria-label={`Sửa tên dự án ${projectName}`}
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -447,7 +449,7 @@ const AdminProjects = () => {
                       {statusLabel[project.status] ?? project.status}
                     </span>
                   </div>
-                  {project.organizerAssignmentStatus && (
+                  {project.status !== "cancelled" && project.organizerAssignmentStatus && (
                     <div className="mt-2">
                       <span
                         className={`inline-flex rounded-full px-2 py-1 text-[11px] font-body font-semibold ${
@@ -545,24 +547,6 @@ const AdminProjects = () => {
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 font-body text-sm text-amber-900">
                   Đang chờ {selectedProject.organizerUser?.displayName ?? "organizer"} chấp nhận yêu cầu
                   phân công. Organizer chưa có quyền quản lý dự án trong thời gian này.
-                </div>
-              )}
-              {selectedProject.organizerAssignmentStatus === "accepted" && selectedProject.organizerUser?.id && (
-                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 font-body text-sm text-emerald-900">
-                  <p className="font-semibold">
-                    {selectedProject.organizerUser.displayName} đã chấp nhận phân công.
-                  </p>
-                  <p className="mt-1">
-                    Admin có thể gửi lại yêu cầu nếu cần organizer xác nhận lại.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => updateProjectOrganizer(selectedProject.id, selectedProject.organizerUser!.id)}
-                  >
-                    Gửi lại yêu cầu
-                  </Button>
                 </div>
               )}
               {selectedProject.organizerAssignmentStatus === "rejected" && (

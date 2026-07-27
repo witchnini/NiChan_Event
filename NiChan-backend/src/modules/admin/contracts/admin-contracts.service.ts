@@ -239,10 +239,16 @@ export const getContractById = async (id: string) => {
 
 export const createContract = async (input: CreateContractInput, createdById: string) => {
   const year = new Date().getFullYear();
-  const count = await prisma.contract.count({
+  const existingCodes = await prisma.contract.findMany({
     where: { contractCode: { startsWith: `HD-${year}-` } },
+    select: { contractCode: true },
   });
-  const contractCode = `HD-${year}-${String(count + 1).padStart(3, "0")}`;
+  const nextSequence =
+    existingCodes.reduce((maxSequence, contract) => {
+      const sequence = Number(contract.contractCode.split("-").at(-1));
+      return Number.isInteger(sequence) ? Math.max(maxSequence, sequence) : maxSequence;
+    }, 0) + 1;
+  const contractCode = `HD-${year}-${String(nextSequence).padStart(3, "0")}`;
   const lineItems = normalizeLineItems(input.lineItems);
   const totalValue = lineItems.length > 0 ? sumLineItems(lineItems) : input.totalValue ?? 0;
   ensurePositiveContractTotal(totalValue);
@@ -341,7 +347,14 @@ export const sendContract = async (id: string, sentById: string) => {
   const existing = await prisma.contract.findUnique({
     where: { id },
     include: {
-      event: { select: { id: true, name: true, eventDate: true } },
+      event: {
+        select: {
+          id: true,
+          name: true,
+          eventDate: true,
+          consultationRequestId: true,
+        },
+      },
       versions: {
         take: 1,
         orderBy: { createdAt: "desc" },
@@ -361,6 +374,22 @@ export const sendContract = async (id: string, sentById: string) => {
       where: { id },
       data: { status: "sent", sentAt, rejectionNote: null, respondedAt: null },
     });
+
+    await tx.event.update({
+      where: { id: existing.eventId },
+      data: { status: "quoted" },
+    });
+
+    if (existing.event.consultationRequestId) {
+      await tx.consultationRequest.update({
+        where: { id: existing.event.consultationRequestId },
+        data: {
+          status: "quoted",
+          quotedAt: sentAt,
+          confirmedAt: null,
+        },
+      });
+    }
 
     await ensureContractPaymentSchedule(tx, {
       contractId: id,
@@ -610,7 +639,15 @@ export const deleteContract = async (id: string) => {
 export const cancelContract = async (id: string, cancelledById: string) => {
   const existing = await prisma.contract.findUnique({
     where: { id },
-    include: { event: { select: { id: true, name: true } } },
+    include: {
+      event: {
+        select: {
+          id: true,
+          name: true,
+          consultationRequestId: true,
+        },
+      },
+    },
   });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
   if (existing.status === "cancelled")
@@ -624,18 +661,37 @@ export const cancelContract = async (id: string, cancelledById: string) => {
       data: { status: "cancelled" },
     });
 
+    await tx.event.update({
+      where: { id: existing.eventId },
+      data: { status: "cancelled", completedAt: null },
+    });
+
+    if (existing.event.consultationRequestId) {
+      await tx.consultationRequest.update({
+        where: { id: existing.event.consultationRequestId },
+        data: { status: "cancelled" },
+      });
+    }
+    await tx.contract.updateMany({
+      where: { eventId: existing.eventId, status: { not: "liquidated" } },
+      data: { status: "cancelled" },
+    });
+
     await tx.eventActivity.create({
       data: {
         eventId: existing.eventId,
         actorUserId: cancelledById,
         iconName: "x-circle",
-        message: `Đã hủy hợp đồng ${existing.contractCode}.`,
+        message: `Đã hủy hợp đồng ${existing.contractCode}; dự án "${existing.event.name}" cũng được chuyển sang trạng thái đã hủy.`,
       },
     });
 
     // Cancel pending transactions
     await tx.transaction.updateMany({
-      where: { contractId: id, status: "pending" },
+      where: {
+        status: "pending",
+        OR: [{ eventId: existing.eventId }, { contract: { eventId: existing.eventId } }],
+      },
       data: { status: "cancelled" },
     });
 

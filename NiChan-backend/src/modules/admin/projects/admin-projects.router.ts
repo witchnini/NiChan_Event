@@ -38,6 +38,7 @@ adminProjectsRouter.get("/", async (req: Request, res: Response) => {
   const { items, total } = await listAdminProjects({
     status: q(req, "status"),
     organizerId: q(req, "organizerId"),
+    contractEligible: q(req, "contractEligible") === "true",
     search: q(req, "search"),
     skip: pg.skip,
     take: pg.take,

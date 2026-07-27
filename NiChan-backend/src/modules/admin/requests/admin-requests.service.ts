@@ -120,6 +120,12 @@ export const listRequests = async (filters: {
       include: {
         assignedManager: { select: { id: true, displayName: true, avatarUrl: true } },
         customerUser: { select: { id: true, displayName: true } },
+        assignmentHistory: {
+          include: {
+            organizer: { select: { id: true, displayName: true, avatarUrl: true } },
+          },
+          orderBy: { assignedAt: "desc" },
+        },
         _count: { select: { events: true } },
       },
     }),
@@ -136,6 +142,12 @@ export const getRequestById = async (id: string) => {
       assignedManager: { select: { id: true, displayName: true, avatarUrl: true } },
       customerUser: { select: { id: true, displayName: true } },
       events: { select: { id: true, name: true, status: true } },
+      assignmentHistory: {
+        include: {
+          organizer: { select: { id: true, displayName: true, avatarUrl: true } },
+        },
+        orderBy: { assignedAt: "desc" },
+      },
     },
   });
   if (!req) throw createError("NOT_FOUND", "Consultation request not found", 404);
@@ -178,6 +190,11 @@ export const assignManager = async (requestId: string, input: AssignManagerInput
     : await bcrypt.hash(`Nichan-${randomUUID()}`, SALT_ROUNDS);
 
   const { updatedRequest, event, notification } = await prisma.$transaction(async (tx) => {
+    await tx.organizerRequestAssignmentHistory.updateMany({
+      where: { requestId: request.id, status: "pending" },
+      data: { status: "reassigned", respondedAt: new Date() },
+    });
+
     const customerUser = existingCustomerUser
       ? await tx.user.update({
           where: { id: existingCustomerUser.id },
@@ -221,6 +238,15 @@ export const assignManager = async (requestId: string, input: AssignManagerInput
       include: {
         assignedManager: { select: { id: true, displayName: true, avatarUrl: true } },
         customerUser: { select: { id: true, displayName: true } },
+      },
+    });
+
+    await tx.organizerRequestAssignmentHistory.create({
+      data: {
+        requestId: request.id,
+        organizerUserId: input.managerUserId,
+        status: request.status === "confirmed" ? "accepted" : "pending",
+        respondedAt: request.status === "confirmed" ? new Date() : null,
       },
     });
 
@@ -290,7 +316,7 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
       locationText: true,
       guestCount: true,
       note: true,
-      events: { select: { id: true, name: true } },
+      events: { select: { id: true, name: true, status: true } },
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Request not found", 404);
@@ -321,6 +347,16 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
   if (input.status === "confirmed" && existing.organizerRequestStatus !== "accepted") {
     throw createError("CONFLICT", "Organizer must accept this request before confirming it", 409);
   }
+  if (
+    input.status === "completed" &&
+    !existing.events.some((event) => event.status === "completed")
+  ) {
+    throw createError(
+      "CONFLICT",
+      "The linked project must be completed before completing this request",
+      409,
+    );
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     const updatedRequest = await tx.consultationRequest.update({
@@ -344,6 +380,14 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
         rejected: {
           title: "Yêu cầu chưa được chấp thuận",
           message: `Yêu cầu ${existing.requestCode} chưa được chấp thuận.`,
+        },
+        completed: {
+          title: "Yêu cầu đã hoàn thành",
+          message: `Dự án của yêu cầu ${existing.requestCode} đã hoàn thành.`,
+        },
+        cancelled: {
+          title: "Yêu cầu đã bị hủy",
+          message: `Dự án của yêu cầu ${existing.requestCode} đã bị hủy.`,
         },
       };
       const content = statusMessage[input.status];

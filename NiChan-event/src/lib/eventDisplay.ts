@@ -94,6 +94,8 @@ export const requestStatusLabels: Record<string, string> = {
   reviewing: "Đang xem xét",
   quoted: "Đã báo giá",
   confirmed: "Đã xác nhận",
+  completed: "Hoàn thành",
+  cancelled: "Đã hủy",
   rejected: "Từ chối",
 };
 
@@ -102,6 +104,8 @@ export const requestStatusColors: Record<string, string> = {
   reviewing: "bg-muted text-muted-foreground",
   quoted: "bg-secondary/10 text-secondary",
   confirmed: "bg-secondary/20 text-secondary",
+  completed: "bg-green-100 text-green-700",
+  cancelled: "bg-destructive/10 text-destructive",
   rejected: "bg-destructive/10 text-destructive",
 };
 
@@ -110,6 +114,8 @@ export const requestStatusFilters = [
   { value: "reviewing", label: "Đang xem xét" },
   { value: "quoted", label: "Đã báo giá" },
   { value: "confirmed", label: "Đã xác nhận" },
+  { value: "completed", label: "Hoàn thành" },
+  { value: "cancelled", label: "Đã hủy" },
   { value: "rejected", label: "Từ chối" },
 ];
 

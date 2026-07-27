@@ -6,6 +6,7 @@ import {
   Briefcase,
   Calendar,
   CheckCircle,
+  ChevronDown,
   ChevronRight,
   Edit2,
   Eye,
@@ -94,10 +95,23 @@ type OrganizerRequestAssignment = {
   locationText?: string | null;
   note?: string | null;
   status: string;
+  assignedManagerId?: string | null;
   organizerRequestStatus?: "pending" | "accepted" | "rejected" | null;
   organizerRequestRejectionReason?: string | null;
   organizerRequestRespondedAt?: string | null;
+  assignmentHistory?: {
+    id: string;
+    status: "pending" | "accepted" | "rejected" | "reassigned";
+    rejectionReason?: string | null;
+    assignedAt: string;
+    respondedAt?: string | null;
+  }[];
   createdAt: string;
+};
+
+type OrganizerRequestAssignmentResponse = {
+  request: OrganizerRequestAssignment;
+  event?: { id: string; name: string } | null;
 };
 
 type ProjectDetail = Project & {
@@ -566,6 +580,9 @@ const parseEventNameFromNote = (note?: string | null): string | null => {
   return eventName || null;
 };
 
+const getRejectedRequestHistoryItem = (request: OrganizerRequestAssignment) =>
+  request.assignmentHistory?.find((item) => item.status === "rejected");
+
 const normalizeName = (value?: string | null) => value?.trim().toLowerCase() ?? "";
 
 const getRequestProjectName = (project: Pick<Project, "name" | "type" | "consultationRequest">) =>
@@ -638,6 +655,7 @@ const OrganizerProjects = () => {
   const [createStaffForm, setCreateStaffForm] = useState(emptyCreateStaffForm);
   const [createStaffSaving, setCreateStaffSaving] = useState(false);
   const [respondingAssignmentId, setRespondingAssignmentId] = useState<string | null>(null);
+  const [assignmentRequestsOpen, setAssignmentRequestsOpen] = useState(false);
   const [rejectionProject, setRejectionProject] = useState<Project | null>(null);
   const [rejectionRequest, setRejectionRequest] = useState<OrganizerRequestAssignment | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
@@ -658,17 +676,59 @@ const OrganizerProjects = () => {
     [projects, selectedProjectId],
   );
   const acceptedProjects = useMemo(
-    () => projects.filter((project) => project.organizerAssignmentStatus === "accepted"),
+    () =>
+      projects.filter(
+        (project) =>
+          project.organizerAssignmentStatus === "accepted" &&
+          project.status !== "cancelled",
+      ),
     [projects],
   );
   const pendingRequestAssignments = useMemo(
-    () => requestAssignments.filter((request) => request.organizerRequestStatus === "pending"),
-    [requestAssignments],
+    () =>
+      requestAssignments.filter(
+        (request) =>
+          request.assignedManagerId === user?.userId &&
+          request.organizerRequestStatus === "pending",
+      ),
+    [requestAssignments, user?.userId],
   );
   const pendingProjectAssignments = useMemo(
-    () => projects.filter((project) => project.organizerAssignmentStatus === "pending"),
+    () =>
+      projects.filter(
+        (project) =>
+          project.organizerAssignmentStatus === "pending" &&
+          project.status !== "cancelled",
+      ),
     [projects],
   );
+  const cancelledProjectHistory = useMemo(
+    () => projects.filter((project) => project.status === "cancelled"),
+    [projects],
+  );
+  const rejectedRequestHistory = useMemo(
+    () =>
+      requestAssignments.filter(
+        (request) =>
+          request.assignmentHistory?.some((item) => item.status === "rejected") ||
+          (request.assignedManagerId === user?.userId &&
+            request.organizerRequestStatus === "rejected"),
+      ),
+    [requestAssignments, user?.userId],
+  );
+  const rejectedProjectHistory = useMemo(
+    () =>
+      projects.filter(
+        (project) =>
+          project.organizerAssignmentStatus === "rejected" &&
+          project.status !== "cancelled",
+      ),
+    [projects],
+  );
+  const assignmentHistoryCount =
+    cancelledProjectHistory.length +
+    rejectedRequestHistory.length +
+    rejectedProjectHistory.length;
   const pendingAssignmentCount = pendingRequestAssignments.length + pendingProjectAssignments.length;
   const activeProject = projectDetail ?? selectedProject;
   const activeProjectDisplayName = activeProject ? getProjectDisplayName(activeProject) : kanban?.project.name ?? "";
@@ -1542,16 +1602,23 @@ const OrganizerProjects = () => {
   ) => {
     setRespondingAssignmentId(request.id);
     try {
-      await apiClient.patch(`/organizer/requests/${request.id}/assignment-response`, {
-        action,
-        reason,
-      });
+      const response = await apiClient.patch<OrganizerRequestAssignmentResponse>(
+        `/organizer/requests/${request.id}/assignment-response`,
+        {
+          action,
+          reason,
+        },
+      );
       toast.success(action === "accept" ? "Đã nhận yêu cầu tư vấn" : "Đã gửi lý do từ chối");
       if (action === "reject") {
         setRejectionRequest(null);
         setRejectionReason("");
       }
       await loadRequestAssignments();
+      if (action === "accept") {
+        const currentId = await loadProjects(response.event?.id);
+        if (currentId) await loadProjectContext(currentId);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Không thể phản hồi yêu cầu");
     } finally {
@@ -1594,21 +1661,49 @@ const OrganizerProjects = () => {
         </div>
       </div>
 
-      <section className="rounded-2xl border border-border bg-surface-lowest p-5 shadow-ambient">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-serif text-headline-md text-foreground">Yêu cầu phân công</h2>
-            <p className="font-body text-sm text-muted-foreground">
-              Nhận hoặc từ chối các lời mời do admin gửi đến bạn.
-            </p>
+      <section className="overflow-hidden rounded-xl border border-border bg-surface-lowest shadow-ambient">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-low focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+          aria-expanded={assignmentRequestsOpen}
+          aria-controls="assignment-requests-content"
+          onClick={() => setAssignmentRequestsOpen((open) => !open)}
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <Mail size={18} className="shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <h2 className="font-body text-sm font-semibold text-foreground">Yêu cầu phân công</h2>
+              <p className="truncate font-body text-xs text-muted-foreground">
+                {pendingAssignmentCount > 0
+                  ? `Có yêu cầu mới cần phản hồi · ${assignmentHistoryCount} mục trong lịch sử`
+                  : `${assignmentHistoryCount} mục trong lịch sử phân công · Bấm để xem`}
+              </p>
+            </div>
           </div>
-          <span className="rounded-full bg-amber-100 px-3 py-1 font-body text-xs font-semibold text-amber-800">
-            {pendingAssignmentCount} đang chờ
-          </span>
-        </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span
+              className={`inline-flex min-w-6 items-center justify-center rounded-full px-2 py-0.5 font-body text-xs font-semibold ${
+                pendingAssignmentCount > 0
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-surface-low text-muted-foreground"
+              }`}
+              aria-label={`${pendingAssignmentCount} yêu cầu đang chờ`}
+            >
+              {pendingAssignmentCount}
+            </span>
+            <ChevronDown
+              size={18}
+              className={`text-muted-foreground transition-transform ${
+                assignmentRequestsOpen ? "rotate-180" : ""
+              }`}
+            />
+          </div>
+        </button>
 
-        {pendingAssignmentCount > 0 ? (
-          <div className="space-y-3">
+        {assignmentRequestsOpen && (
+          <div id="assignment-requests-content" className="border-t border-border p-4">
+            {pendingAssignmentCount > 0 ? (
+              <div className="space-y-3">
             {pendingRequestAssignments.map((request) => (
               <div
                 key={request.id}
@@ -1695,16 +1790,157 @@ const OrganizerProjects = () => {
                 </div>
               </div>
             ))}
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-border bg-surface-low p-5 text-center">
-            <CheckCircle className="mx-auto text-emerald-600" size={24} />
-            <p className="mt-2 font-body text-sm font-semibold text-foreground">
-              Không có yêu cầu mới
-            </p>
-            <p className="mt-1 font-body text-xs text-muted-foreground">
-              Lời mời mới sẽ xuất hiện tại đây sau khi admin phân công cho bạn.
-            </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-border bg-surface-low p-5 text-center">
+                <CheckCircle className="mx-auto text-emerald-600" size={24} />
+                <p className="mt-2 font-body text-sm font-semibold text-foreground">
+                  Không có yêu cầu mới
+                </p>
+                <p className="mt-1 font-body text-xs text-muted-foreground">
+                  Lời mời mới sẽ xuất hiện tại đây sau khi admin phân công cho bạn.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-5 border-t border-border pt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-body text-sm font-semibold text-foreground">
+                    Lịch sử phân công
+                  </h3>
+                  <p className="font-body text-xs text-muted-foreground">
+                    Các yêu cầu đã từ chối hoặc dự án đã hủy được giữ lại để đối chiếu.
+                  </p>
+                </div>
+                <span className="rounded-full bg-destructive/10 px-2.5 py-1 font-body text-xs font-semibold text-destructive">
+                  {assignmentHistoryCount}
+                </span>
+              </div>
+
+              {assignmentHistoryCount > 0 ? (
+                <div className="space-y-2">
+                  {rejectedRequestHistory.map((request) => (
+                    <div
+                      key={`request-${request.id}`}
+                      className="rounded-xl border border-border bg-surface-low p-4"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-background px-2 py-0.5 font-body text-[11px] font-semibold text-primary">
+                          {request.requestCode}
+                        </span>
+                        <p className="font-body text-sm font-semibold text-foreground">
+                          {parseEventNameFromNote(request.note) || request.eventType}
+                        </p>
+                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 font-body text-[11px] font-semibold text-destructive">
+                          Đã từ chối
+                        </span>
+                      </div>
+                      <p className="mt-1 font-body text-xs text-muted-foreground">
+                        {request.customerName}
+                        {" · "}
+                        {request.eventDate
+                          ? new Date(request.eventDate).toLocaleDateString("vi-VN")
+                          : "Chưa có ngày tổ chức"}
+                        {(getRejectedRequestHistoryItem(request)?.respondedAt ??
+                          request.organizerRequestRespondedAt)
+                          ? ` · Phản hồi ${new Date(
+                              (getRejectedRequestHistoryItem(request)?.respondedAt ??
+                                request.organizerRequestRespondedAt)!,
+                            ).toLocaleDateString("vi-VN")}`
+                          : ""}
+                      </p>
+                      {(getRejectedRequestHistoryItem(request)?.rejectionReason ??
+                        request.organizerRequestRejectionReason) && (
+                        <p className="mt-2 font-body text-xs text-destructive">
+                          Lý do:{" "}
+                          {getRejectedRequestHistoryItem(request)?.rejectionReason ??
+                            request.organizerRequestRejectionReason}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+
+                  {rejectedProjectHistory.map((project) => (
+                    <div
+                      key={`rejected-project-${project.id}`}
+                      className="rounded-xl border border-border bg-surface-low p-4"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-body text-sm font-semibold text-foreground">
+                          {getProjectDisplayName(project)}
+                        </p>
+                        <span className="rounded-full bg-destructive/10 px-2 py-0.5 font-body text-[11px] font-semibold text-destructive">
+                          Đã từ chối
+                        </span>
+                      </div>
+                      <p className="mt-1 font-body text-xs text-muted-foreground">
+                        {getProjectCustomerName(project)}
+                        {project.consultationRequest?.requestCode
+                          ? ` · ${project.consultationRequest.requestCode}`
+                          : ""}
+                      </p>
+                      {project.organizerRejectionReason && (
+                        <p className="mt-2 font-body text-xs text-destructive">
+                          Lý do: {project.organizerRejectionReason}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+
+                  {cancelledProjectHistory.map((project) => (
+                    <div
+                      key={`cancelled-project-${project.id}`}
+                      className="flex flex-col gap-3 rounded-xl border border-border bg-surface-low p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-body text-sm font-semibold text-foreground">
+                            {getProjectDisplayName(project)}
+                          </p>
+                          <span className={`rounded-full px-2 py-0.5 font-body text-[11px] font-semibold ${eventStatusColors.cancelled}`}>
+                            {getEventStatusLabel(project.status)}
+                          </span>
+                        </div>
+                        <p className="mt-1 font-body text-xs text-muted-foreground">
+                          {getProjectCustomerName(project)}
+                          {project.consultationRequest?.requestCode
+                            ? ` · ${project.consultationRequest.requestCode}`
+                            : ""}
+                          {" · "}
+                          {project.eventDate
+                            ? new Date(project.eventDate).toLocaleDateString("vi-VN")
+                            : "Chưa có ngày tổ chức"}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => {
+                          setSelectedProjectId(project.id);
+                          setView("overview");
+                          void loadProjectContext(project.id);
+                        }}
+                      >
+                        <Eye size={15} className="mr-2" />
+                        Xem lại
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-surface-low p-4 text-center">
+                  <p className="font-body text-sm font-medium text-foreground">
+                    Chưa có lịch sử phân công
+                  </p>
+                  <p className="mt-1 font-body text-xs text-muted-foreground">
+                    Yêu cầu đã từ chối hoặc dự án bị hủy sẽ được giữ lại tại đây.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

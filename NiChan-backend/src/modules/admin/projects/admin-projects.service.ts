@@ -31,6 +31,7 @@ const SORTABLE_FIELDS = new Set([
 export const listAdminProjects = async (filters: {
   status?: string;
   organizerId?: string;
+  contractEligible?: boolean;
   search?: string;
   skip: number;
   take: number;
@@ -38,7 +39,23 @@ export const listAdminProjects = async (filters: {
   sortOrder: "asc" | "desc";
 }) => {
   const where: Prisma.EventWhereInput = {
-    consultationRequest: { status: "confirmed" },
+    ...(filters.contractEligible
+      ? {
+          status: { not: "cancelled" },
+          consultationRequest: { status: { not: "rejected" } },
+          OR: [
+            { status: "in_progress" },
+            {
+              organizerUserId: { not: null },
+              organizerAssignmentStatus: "accepted",
+            },
+          ],
+        }
+      : {
+          consultationRequest: {
+            status: { in: ["confirmed", "completed", "cancelled"] },
+          },
+        }),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.organizerId ? { organizerUserId: filters.organizerId } : {}),
     ...(filters.search
@@ -199,10 +216,20 @@ export const updateAdminProjectStatus = async (
 ) => {
   const event = await prisma.event.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true, status: true, customerUserId: true },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      customerUserId: true,
+      organizerUserId: true,
+      consultationRequestId: true,
+    },
   });
   if (!event) throw createError("NOT_FOUND", "Project not found", 404);
   if (event.status === input.status) return event;
+  if (event.status === "cancelled") {
+    throw createError("CONFLICT", "A cancelled project cannot be resumed", 409);
+  }
 
   if (["contracted", "quoted", "planning", "in_progress", "completed"].includes(input.status)) {
     const copy = buildStatusNotification(event.name, input.status);
@@ -227,6 +254,26 @@ export const updateAdminProjectStatus = async (
       select: { id: true, name: true, status: true, progressPercent: true },
     });
 
+    if (input.status === "cancelled" && event.consultationRequestId) {
+      await tx.consultationRequest.update({
+        where: { id: event.consultationRequestId },
+        data: { status: "cancelled" },
+      });
+    }
+    if (input.status === "cancelled") {
+      await tx.contract.updateMany({
+        where: { eventId: projectId, status: { not: "liquidated" } },
+        data: { status: "cancelled" },
+      });
+      await tx.transaction.updateMany({
+        where: {
+          status: "pending",
+          OR: [{ eventId: projectId }, { contract: { eventId: projectId } }],
+        },
+        data: { status: "cancelled" },
+      });
+    }
+
     await tx.eventActivity.create({
       data: {
         eventId: projectId,
@@ -239,7 +286,7 @@ export const updateAdminProjectStatus = async (
       },
     });
 
-    const notification =
+    const customerNotification =
       input.status === "cancelled"
         ? await tx.notification.create({
             data: {
@@ -264,10 +311,48 @@ export const updateAdminProjectStatus = async (
           })
         : null;
 
-    return { updatedEvent, notification };
+    const organizerNotification =
+      input.status === "cancelled" && event.organizerUserId
+        ? await tx.notification.create({
+            data: {
+              userId: event.organizerUserId,
+              scope: "organizer",
+              type: "project",
+              title: "Dự án đã bị hủy",
+              message: `Dự án ${event.name} đã bị admin hủy và được chuyển vào lịch sử phân công.`,
+              entityType: "event",
+              entityId: projectId,
+            },
+            select: {
+              id: true,
+              userId: true,
+              type: true,
+              title: true,
+              message: true,
+              entityType: true,
+              entityId: true,
+              createdAt: true,
+            },
+          })
+        : null;
+
+    return { updatedEvent, customerNotification, organizerNotification };
   });
 
-  if (result.notification) emitCustomerNotification(result.notification);
+  if (result.customerNotification) {
+    emitCustomerNotification(result.customerNotification);
+  }
+  if (result.organizerNotification) {
+    emitNotification(result.organizerNotification.userId, {
+      id: result.organizerNotification.id,
+      type: result.organizerNotification.type,
+      title: result.organizerNotification.title,
+      message: result.organizerNotification.message,
+      entityType: result.organizerNotification.entityType,
+      entityId: result.organizerNotification.entityId,
+      createdAt: result.organizerNotification.createdAt,
+    });
+  }
   return result.updatedEvent;
 };
 
@@ -278,9 +363,11 @@ export const updateAdminProjectName = async (
 ) => {
   const project = await prisma.event.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, status: true },
   });
   if (!project) throw createError("NOT_FOUND", "Project not found", 404);
+  if (project.status === "cancelled")
+    throw createError("CONFLICT", "A cancelled project cannot be modified", 409);
   if (project.name === input.name) return project;
 
   return prisma.$transaction(async (tx) => {
@@ -323,9 +410,11 @@ export const updateAdminProjectOrganizer = async (
 ) => {
   const project = await prisma.event.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true, organizerUserId: true },
+    select: { id: true, name: true, status: true, organizerUserId: true },
   });
   if (!project) throw createError("NOT_FOUND", "Project not found", 404);
+  if (project.status === "cancelled")
+    throw createError("CONFLICT", "A cancelled project cannot be reassigned", 409);
 
   if (input.organizerUserId) {
     const organizer = await prisma.user.findFirst({

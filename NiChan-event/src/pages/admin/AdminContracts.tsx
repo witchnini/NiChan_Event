@@ -1205,7 +1205,10 @@ const AdminContracts = () => {
 
   const loadProjects = async () => {
     try {
-      const data = await apiClient.get<Project[]>("/admin/projects", { pageSize: 100 });
+      const data = await apiClient.get<Project[]>("/admin/projects", {
+        contractEligible: true,
+        pageSize: 100,
+      });
       setProjects(data);
     } catch (error) {
       toast.error("Không tải được danh sách dự án");

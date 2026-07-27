@@ -698,7 +698,14 @@ export const respondToContract = async (
   const contract = await prisma.contract.findUnique({
     where: { id: contractId },
     include: {
-      event: { select: { id: true, name: true } },
+      event: {
+        select: {
+          id: true,
+          name: true,
+          organizerUserId: true,
+          consultationRequestId: true,
+        },
+      },
       customerUser: { select: { id: true, displayName: true } },
       createdBy: { select: { id: true } },
     },
@@ -725,6 +732,21 @@ export const respondToContract = async (
         },
       });
 
+      await tx.event.update({
+        where: { id: contract.eventId },
+        data: { status: "planning" },
+      });
+
+      if (contract.event.consultationRequestId) {
+        await tx.consultationRequest.update({
+          where: { id: contract.event.consultationRequestId },
+          data: {
+            status: "confirmed",
+            confirmedAt: now,
+          },
+        });
+      }
+
       await tx.eventActivity.create({
         data: {
           eventId: contract.eventId,
@@ -749,7 +771,21 @@ export const respondToContract = async (
         });
       }
 
-      return { updated, notification };
+      const organizerNotification = contract.event.organizerUserId
+        ? await tx.notification.create({
+            data: {
+              userId: contract.event.organizerUserId,
+              scope: "organizer",
+              type: "contract_accepted",
+              title: "Khách hàng đã đồng ý hợp đồng",
+              message: `${customerName} đã đồng ý hợp đồng ${contract.contractCode}. Dự án ${eventName} đã chuyển sang lập kế hoạch.`,
+              entityType: "event",
+              entityId: contract.eventId,
+            },
+          })
+        : null;
+
+      return { updated, notification, organizerNotification };
     });
 
     if (result.notification && contract.createdBy?.id) {
@@ -761,6 +797,18 @@ export const respondToContract = async (
         entityType: result.notification.entityType,
         entityId: result.notification.entityId,
         createdAt: result.notification.createdAt,
+      });
+    }
+
+    if (result.organizerNotification && contract.event.organizerUserId) {
+      emitNotification(contract.event.organizerUserId, {
+        id: result.organizerNotification.id,
+        type: result.organizerNotification.type,
+        title: result.organizerNotification.title,
+        message: result.organizerNotification.message,
+        entityType: result.organizerNotification.entityType,
+        entityId: result.organizerNotification.entityId,
+        createdAt: result.organizerNotification.createdAt,
       });
     }
 

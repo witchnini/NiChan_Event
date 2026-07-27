@@ -19,11 +19,53 @@ const contractLineItemsInclude = {
   orderBy: [{ sortOrder: "asc" as const }, { createdAt: "asc" as const }],
 };
 
+const parseEventNameFromNote = (note?: string | null) => {
+  if (!note) return null;
+
+  const eventNameLine = note
+    .split(/\r?\n/)
+    .find((line) => line.trim().toLowerCase().startsWith("ten su kien:"));
+
+  if (!eventNameLine) return null;
+
+  const eventName = eventNameLine.split(":").slice(1).join(":").trim();
+  return eventName || null;
+};
+
+const buildEventNameFromRequest = (request: {
+  eventType: string;
+  note?: string | null;
+}) => parseEventNameFromNote(request.note) ?? request.eventType;
+
+const buildEventDataFromRequest = (request: {
+  id: string;
+  eventType: string;
+  eventDate?: Date | null;
+  locationText?: string | null;
+  guestCount?: number | null;
+  note?: string | null;
+  customerUserId: string;
+  assignedManagerId: string;
+}) => ({
+  name: buildEventNameFromRequest(request),
+  type: request.eventType,
+  customerUserId: request.customerUserId,
+  organizerUserId: request.assignedManagerId,
+  organizerAssignmentStatus: "accepted",
+  organizerRejectionReason: null,
+  organizerRespondedAt: new Date(),
+  consultationRequestId: request.id,
+  eventDate: request.eventDate,
+  locationText: request.locationText,
+  guestCount: request.guestCount,
+  summary: request.note,
+});
+
 // ─── Projects List ────────────────────────────────────────────────────────────
 
 export const listOrganizerProjects = async (organizerUserId: string) => {
   return prisma.event.findMany({
-    where: { organizerUserId, consultationRequest: { status: "confirmed" } },
+    where: { organizerUserId },
     select: {
       id: true,
       name: true,
@@ -57,7 +99,10 @@ export const listOrganizerProjects = async (organizerUserId: string) => {
 export const listOrganizerRequestAssignments = async (organizerUserId: string) => {
   return prisma.consultationRequest.findMany({
     where: {
-      assignedManagerId: organizerUserId,
+      OR: [
+        { assignedManagerId: organizerUserId },
+        { assignmentHistory: { some: { organizerUserId } } },
+      ],
       status: { in: ["reviewing", "quoted"] },
     },
     select: {
@@ -73,10 +118,22 @@ export const listOrganizerRequestAssignments = async (organizerUserId: string) =
       locationText: true,
       note: true,
       status: true,
+      assignedManagerId: true,
       organizerRequestStatus: true,
       organizerRequestRejectionReason: true,
       organizerRequestRespondedAt: true,
       createdAt: true,
+      assignmentHistory: {
+        where: { organizerUserId },
+        select: {
+          id: true,
+          status: true,
+          rejectionReason: true,
+          assignedAt: true,
+          respondedAt: true,
+        },
+        orderBy: { assignedAt: "desc" },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -123,7 +180,77 @@ export const respondRequestAssignment = async (
 
     const updatedRequest = await tx.consultationRequest.findUniqueOrThrow({
       where: { id: requestId },
+      include: { events: { select: { id: true } } },
     });
+
+    const assignmentHistory = await tx.organizerRequestAssignmentHistory.findFirst({
+      where: {
+        requestId,
+        organizerUserId,
+        status: "pending",
+      },
+      orderBy: { assignedAt: "desc" },
+      select: { id: true },
+    });
+    if (assignmentHistory) {
+      await tx.organizerRequestAssignmentHistory.update({
+        where: { id: assignmentHistory.id },
+        data: {
+          status: accepted ? "accepted" : "rejected",
+          rejectionReason: accepted ? null : reason,
+          respondedAt: new Date(),
+        },
+      });
+    } else {
+      await tx.organizerRequestAssignmentHistory.create({
+        data: {
+          requestId,
+          organizerUserId,
+          status: accepted ? "accepted" : "rejected",
+          rejectionReason: accepted ? null : reason,
+          assignedAt: updatedRequest.createdAt,
+          respondedAt: new Date(),
+        },
+      });
+    }
+
+    let event: { id: string; name: string } | null = null;
+    if (accepted) {
+      if (!updatedRequest.customerUserId || !updatedRequest.assignedManagerId) {
+        throw createError("CONFLICT", "Request must be linked to a customer and organizer before accepting", 409);
+      }
+
+      const eventData = buildEventDataFromRequest({
+        id: updatedRequest.id,
+        eventType: updatedRequest.eventType,
+        eventDate: updatedRequest.eventDate,
+        locationText: updatedRequest.locationText,
+        guestCount: updatedRequest.guestCount,
+        note: updatedRequest.note,
+        customerUserId: updatedRequest.customerUserId,
+        assignedManagerId: updatedRequest.assignedManagerId,
+      });
+
+      event = updatedRequest.events[0]?.id
+        ? await tx.event.update({
+            where: { id: updatedRequest.events[0].id },
+            data: eventData,
+            select: { id: true, name: true },
+          })
+        : await tx.event.create({
+            data: { ...eventData, status: "draft" },
+            select: { id: true, name: true },
+          });
+
+      await tx.eventActivity.create({
+        data: {
+          eventId: event.id,
+          actorUserId: organizerUserId,
+          iconName: "check",
+          message: `Organizer đã chấp nhận dự án ${event.name}.`,
+        },
+      });
+    }
 
     const admins = await tx.user.findMany({
       where: { role: "admin", status: "active", deletedAt: null },
@@ -147,7 +274,7 @@ export const respondRequestAssignment = async (
       ),
     );
 
-    return { updatedRequest, notifications };
+    return { updatedRequest, event, notifications };
   });
 
   result.notifications.forEach((notification) => {
@@ -162,7 +289,7 @@ export const respondRequestAssignment = async (
     });
   });
 
-  return result.updatedRequest;
+  return { request: result.updatedRequest, event: result.event };
 };
 
 export const respondProjectAssignment = async (
@@ -256,7 +383,6 @@ export const getOrganizerProjectById = async (projectId: string, organizerUserId
       id: projectId,
       organizerUserId,
       organizerAssignmentStatus: "accepted",
-      consultationRequest: { status: "confirmed" },
     },
     include: {
       customerUser: { select: { id: true, displayName: true, avatarUrl: true, email: true, phone: true } },
@@ -400,7 +526,6 @@ export const getKanban = async (projectId: string, organizerUserId: string) => {
       id: projectId,
       organizerUserId,
       organizerAssignmentStatus: "accepted",
-      consultationRequest: { status: "confirmed" },
     },
     select: {
       id: true,
@@ -526,10 +651,19 @@ export const updateProjectStatus = async (
 ) => {
   const event = await prisma.event.findFirst({
     where: { id: projectId, organizerUserId, organizerAssignmentStatus: "accepted" },
-    select: { id: true, name: true, status: true, customerUserId: true },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      customerUserId: true,
+      consultationRequestId: true,
+    },
   });
   if (!event) throw createError("NOT_FOUND", "Project not found", 404);
   if (event.status === input.status) return event;
+  if (event.status === "cancelled") {
+    throw createError("CONFLICT", "A cancelled project cannot be resumed", 409);
+  }
 
   if (isCustomerTrackingStatus(input.status)) {
     const nextStatus = input.status;
@@ -551,6 +685,26 @@ export const updateProjectStatus = async (
       data: { status: input.status, completedAt: null },
       select: { id: true, name: true, status: true, progressPercent: true },
     });
+
+    if (input.status === "cancelled" && event.consultationRequestId) {
+      await tx.consultationRequest.update({
+        where: { id: event.consultationRequestId },
+        data: { status: "cancelled" },
+      });
+    }
+    if (input.status === "cancelled") {
+      await tx.contract.updateMany({
+        where: { eventId: projectId, status: { not: "liquidated" } },
+        data: { status: "cancelled" },
+      });
+      await tx.transaction.updateMany({
+        where: {
+          status: "pending",
+          OR: [{ eventId: projectId }, { contract: { eventId: projectId } }],
+        },
+        data: { status: "cancelled" },
+      });
+    }
 
     await tx.eventActivity.create({
       data: {
@@ -610,9 +764,11 @@ export const createTask = async (
         ? { organizerUserId, organizerAssignmentStatus: "accepted" }
         : {}),
     },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!event) throw createError("NOT_FOUND", "Event not found", 404);
+  if (event.status === "cancelled")
+    throw createError("CONFLICT", "Cannot add tasks to a cancelled project", 409);
 
   return prisma.$transaction(async (tx) => {
     const task = await tx.projectTask.create({
@@ -646,13 +802,15 @@ const getTaskForOrganizer = async (taskId: string, organizerUserId?: string) => 
         ? { event: { organizerUserId, organizerAssignmentStatus: "accepted" } }
         : {}),
     },
-    select: { id: true, eventId: true, status: true },
+    select: { id: true, eventId: true, status: true, event: { select: { status: true } } },
   });
 };
 
 export const getTask = async (taskId: string, organizerUserId?: string) => {
   const existing = await getTaskForOrganizer(taskId, organizerUserId);
   if (!existing) throw createError("NOT_FOUND", "Task not found", 404);
+  if (existing.event.status === "cancelled")
+    throw createError("CONFLICT", "Tasks in a cancelled project cannot be modified", 409);
 
   const task = await prisma.projectTask.findUnique({
     where: { id: taskId },
@@ -696,6 +854,8 @@ export const updateTaskStatus = async (
 ) => {
   const task = await getTaskForOrganizer(taskId, organizerUserId);
   if (!task) throw createError("NOT_FOUND", "Task not found", 404);
+  if (task.event.status === "cancelled")
+    throw createError("CONFLICT", "Tasks in a cancelled project cannot be progressed", 409);
 
   const currentStatus = task.status as TaskStatus;
   const allowed = TASK_STATUS_TRANSITIONS[currentStatus] ?? [];
@@ -733,6 +893,8 @@ export const updateTaskStatus = async (
 export const deleteTask = async (taskId: string, organizerUserId?: string) => {
   const existing = await getTaskForOrganizer(taskId, organizerUserId);
   if (!existing) throw createError("NOT_FOUND", "Task not found", 404);
+  if (existing.event.status === "cancelled")
+    throw createError("CONFLICT", "Tasks in a cancelled project cannot be deleted", 409);
   await prisma.$transaction(async (tx) => {
     await tx.taskStatusHistory.deleteMany({ where: { taskId } });
     await tx.projectTask.delete({ where: { id: taskId } });
