@@ -240,7 +240,7 @@ model ConsultationRequest {
   budgetRange       String?
   locationText      String?
   note              String?
-  status            String    @default("new") // new | reviewing | quoted | confirmed | completed | cancelled | rejected
+  status            String    @default("new") // new | reviewing | quoted | confirmed | planning | in_progress | completed | cancelled | rejected
   assignedManagerId String?
   organizerRequestStatus          String?   // pending | accepted | rejected
   organizerRequestRejectionReason String?

@@ -51,6 +51,8 @@ const requestStatuses: { value: string; label: string; color: string }[] = [
   { value: "reviewing", label: "Đang xem xét",  color: "bg-muted text-muted-foreground" },
   { value: "quoted",    label: "Đã báo giá",    color: "bg-secondary/10 text-secondary" },
   { value: "confirmed", label: "Đã xác nhận",   color: "bg-secondary/20 text-secondary" },
+  { value: "planning", label: "Lập kế hoạch",    color: "bg-primary/10 text-primary" },
+  { value: "in_progress", label: "Đang triển khai", color: "bg-primary/15 text-primary" },
   { value: "completed", label: "Hoàn thành",     color: "bg-green-100 text-green-700" },
   { value: "cancelled", label: "Đã hủy",         color: "bg-destructive/10 text-destructive" },
   { value: "rejected",  label: "Từ chối",       color: "bg-destructive/10 text-destructive" },

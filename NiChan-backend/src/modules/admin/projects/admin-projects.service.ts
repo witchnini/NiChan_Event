@@ -45,7 +45,16 @@ export const listAdminProjects = async (filters: {
         }
       : {
           consultationRequest: {
-            status: { in: ["confirmed", "completed", "cancelled"] },
+            status: {
+              in: [
+                "quoted",
+                "confirmed",
+                "planning",
+                "in_progress",
+                "completed",
+                "cancelled",
+              ],
+            },
           },
         }),
     ...(filters.status ? { status: filters.status } : {}),

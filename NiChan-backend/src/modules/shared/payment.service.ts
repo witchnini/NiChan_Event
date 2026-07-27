@@ -132,7 +132,7 @@ export const createPaymentOrder = async (
     if (!contract) {
       throw createError("NOT_FOUND", "Không tìm thấy hợp đồng", 404);
     }
-    if (!["sent", "active"].includes(contract.status)) {
+    if (!["sent", "active", "liquidated"].includes(contract.status)) {
       throw createError(
         "INVALID_STATUS",
         "Hợp đồng không ở trạng thái có thể thanh toán",

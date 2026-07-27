@@ -5,7 +5,17 @@ export const assignManagerSchema = z.object({
 });
 
 export const updateRequestStatusSchema = z.object({
-  status: z.enum(["new", "reviewing", "quoted", "confirmed", "completed", "cancelled", "rejected"]),
+  status: z.enum([
+    "new",
+    "reviewing",
+    "quoted",
+    "confirmed",
+    "planning",
+    "in_progress",
+    "completed",
+    "cancelled",
+    "rejected",
+  ]),
 });
 
 export const resendRequestAssignmentSchema = z.object({

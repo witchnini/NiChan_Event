@@ -131,10 +131,10 @@ const PaymentQRModal = ({
             <DialogHeader className="px-6 pt-6 pb-0">
               <DialogTitle className="flex items-center gap-2 font-heading text-lg">
                 <QrCode className="h-5 w-5 text-primary" />
-                Thanh toán chuyển khoản
+                Thanh toán bằng mã QR
               </DialogTitle>
               <DialogDescription className="font-body text-sm">
-                Quét mã QR bằng app ngân hàng hoặc chuyển khoản thủ công
+                Quét mã QR bằng ứng dụng ngân hàng để thanh toán qua SePay
               </DialogDescription>
             </DialogHeader>
 

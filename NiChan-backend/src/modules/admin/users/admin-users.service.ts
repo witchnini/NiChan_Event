@@ -158,6 +158,10 @@ export const softDeleteUser = async (id: string) => {
 
   return prisma.user.update({
     where: { id },
-    data: { deletedAt: new Date(), status: "inactive" },
+    data: {
+      email: `deleted_${existing.id}_${existing.email}`,
+      deletedAt: new Date(),
+      status: "inactive",
+    },
   });
 };

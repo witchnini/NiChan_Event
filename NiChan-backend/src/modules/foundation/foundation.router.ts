@@ -20,7 +20,17 @@ foundationRouter.get("/meta/enums", (_req, res) => {
     data: {
       userRoles: ["admin", "organizer", "customer"],
       userStatuses: ["active", "inactive", "suspended"],
-      requestStatuses: ["new", "reviewing", "quoted", "confirmed", "completed", "cancelled", "rejected"],
+      requestStatuses: [
+        "new",
+        "reviewing",
+        "quoted",
+        "confirmed",
+        "planning",
+        "in_progress",
+        "completed",
+        "cancelled",
+        "rejected",
+      ],
       eventStatuses: [
         "draft",
         "planning",

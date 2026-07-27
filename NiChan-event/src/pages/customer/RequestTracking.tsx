@@ -44,6 +44,8 @@ const requestProgress: Record<string, { percent: number; step: number }> = {
   reviewing: { percent: 10, step: 0 },
   quoted: { percent: 20, step: 1 },
   confirmed: { percent: 25, step: 2 },
+  planning: { percent: 40, step: 3 },
+  in_progress: { percent: 60, step: 5 },
   completed: { percent: 100, step: 7 },
   cancelled: { percent: 0, step: -1 },
   rejected: { percent: 0, step: -1 },

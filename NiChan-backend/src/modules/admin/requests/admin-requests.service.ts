@@ -347,17 +347,6 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
   if (input.status === "confirmed" && existing.organizerRequestStatus !== "accepted") {
     throw createError("CONFLICT", "Organizer must accept this request before confirming it", 409);
   }
-  if (
-    input.status === "completed" &&
-    !existing.events.some((event) => event.status === "completed")
-  ) {
-    throw createError(
-      "CONFLICT",
-      "The linked project must be completed before completing this request",
-      409,
-    );
-  }
-
   const result = await prisma.$transaction(async (tx) => {
     const updatedRequest = await tx.consultationRequest.update({
       where: { id: requestId },
@@ -366,6 +355,43 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
         ...(timestampField[input.status] ? { [timestampField[input.status]]: new Date() } : {}),
       },
     });
+
+    const eventStatusByRequestStatus: Partial<Record<RequestStatus, string>> = {
+      new: "draft",
+      reviewing: "draft",
+      quoted: "quoted",
+      planning: "planning",
+      in_progress: "in_progress",
+      completed: "completed",
+      cancelled: "cancelled",
+      rejected: "cancelled",
+    };
+    const linkedEvent = existing.events[0];
+    const linkedEventStatus = eventStatusByRequestStatus[input.status as RequestStatus];
+    if (linkedEvent && linkedEventStatus) {
+      await tx.event.update({
+        where: { id: linkedEvent.id },
+        data: {
+          status: linkedEventStatus,
+          ...(linkedEventStatus === "completed"
+            ? { progressPercent: 100, completedAt: new Date() }
+            : { completedAt: null }),
+        },
+      });
+      if (linkedEventStatus === "cancelled") {
+        await tx.contract.updateMany({
+          where: { eventId: linkedEvent.id, status: { not: "liquidated" } },
+          data: { status: "cancelled" },
+        });
+        await tx.transaction.updateMany({
+          where: {
+            status: "pending",
+            OR: [{ eventId: linkedEvent.id }, { contract: { eventId: linkedEvent.id } }],
+          },
+          data: { status: "cancelled" },
+        });
+      }
+    }
 
     if (input.status !== "confirmed") {
       const statusMessage: Record<string, { title: string; message: string }> = {
@@ -376,6 +402,14 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
         quoted: {
           title: "Yêu cầu đã được báo giá",
           message: `Yêu cầu ${existing.requestCode} đã được báo giá. Vui lòng theo dõi thông tin cập nhật.`,
+        },
+        planning: {
+          title: "Dự án đang được lập kế hoạch",
+          message: `Dự án của yêu cầu ${existing.requestCode} đã chuyển sang giai đoạn lập kế hoạch.`,
+        },
+        in_progress: {
+          title: "Dự án đang triển khai",
+          message: `Dự án của yêu cầu ${existing.requestCode} đang được triển khai.`,
         },
         rejected: {
           title: "Yêu cầu chưa được chấp thuận",

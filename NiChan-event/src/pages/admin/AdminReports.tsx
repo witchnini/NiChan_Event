@@ -141,7 +141,7 @@ const chartColors = [
   "hsl(50 8% 42%)",
 ];
 
-const requestStatusOrder = ["new", "reviewing", "quoted", "confirmed", "completed", "cancelled", "rejected"];
+const requestStatusOrder = ["new", "reviewing", "quoted", "confirmed", "planning", "in_progress", "completed", "cancelled", "rejected"];
 const eventStatusOrder = ["draft", "quoted", "planning", "contracted", "in_progress", "completed", "cancelled"];
 
 const number = (value: number) => Number(value || 0);

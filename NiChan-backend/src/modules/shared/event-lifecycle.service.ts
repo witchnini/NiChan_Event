@@ -74,6 +74,7 @@ export const ensureCustomerTrackingInTransaction = async (
       status: true,
       customerUserId: true,
       organizerUserId: true,
+      consultationRequestId: true,
       eventDate: true,
       progressPercent: true,
     },
@@ -106,6 +107,25 @@ export const ensureCustomerTrackingInTransaction = async (
       organizerUserId: true,
     },
   });
+
+  if (event.consultationRequestId) {
+    const requestStatusByEventStatus = {
+      quoted: "quoted",
+      contracted: "confirmed",
+      planning: "planning",
+      in_progress: "in_progress",
+      completed: "completed",
+    } as const;
+    const requestStatus = requestStatusByEventStatus[options.status];
+    await tx.consultationRequest.update({
+      where: { id: event.consultationRequestId },
+      data: {
+        status: requestStatus,
+        ...(requestStatus === "quoted" ? { quotedAt: new Date() } : {}),
+        ...(requestStatus === "confirmed" ? { confirmedAt: new Date() } : {}),
+      },
+    });
+  }
 
   const milestoneCount = await tx.eventMilestone.count({ where: { eventId } });
   if (milestoneCount === 0) {

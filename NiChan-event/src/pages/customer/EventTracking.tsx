@@ -8,7 +8,10 @@ import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import ChatAttachment from "@/components/features/chat/ChatAttachment";
+import PaymentQRModal from "@/components/features/payment/PaymentQRModal";
 import { apiClient } from "@/services/apiClient";
+import { useCreatePayment } from "@/hooks/usePayment";
+import type { PaymentQRInfo } from "@/services/payment";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatSocket } from "@/hooks/useChatSocket";
 import { toast } from "sonner";
@@ -87,8 +90,6 @@ type PaymentForm = {
   transactionId: string;
   contractId: string;
   amount: string;
-  paymentMethod: string;
-  note: string;
 };
 
 type FeedbackPanelState = {
@@ -137,7 +138,6 @@ const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-7", title: "Ngày sự kiện", description: "Ngày diễn ra sự kiện chính thức", status: "pending" },
 ];
 
-const PAYMENT_METHODS = ["Chuyển khoản", "Tiền mặt", "Thẻ", "Ví điện tử"];
 const BILLABLE_CONTRACT_STATUSES = new Set(["sent", "active", "liquidated"]);
 
 const EventTracking = () => {
@@ -159,16 +159,17 @@ const EventTracking = () => {
     transactionId: "",
     contractId: "",
     amount: "",
-    paymentMethod: PAYMENT_METHODS[0],
-    note: "",
   });
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [currentPaymentId, setCurrentPaymentId] = useState<string | null>(null);
+  const [currentQRInfo, setCurrentQRInfo] = useState<PaymentQRInfo | null>(null);
+  const { create: createPayment, loading: paying } = useCreatePayment();
   const [activeTab, setActiveTab] = useState<"timeline" | "chat" | "documents" | "payment" | "settlement">("timeline");
   const [unreadChat, setUnreadChat] = useState(0);
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   const [loading, setLoading] = useState(true);
   const [attaching, setAttaching] = useState(false);
-  const [paying, setPaying] = useState(false);
   const messagesListRef = useRef<HTMLDivElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
   const paymentFormRef = useRef<HTMLDivElement>(null);
@@ -545,8 +546,6 @@ const EventTracking = () => {
       transactionId: transaction.id,
       contractId: transaction.contract?.id ?? "",
       amount: String(Number(transaction.amount || 0)),
-      paymentMethod: transaction.paymentMethod || current.paymentMethod || PAYMENT_METHODS[0],
-      note: "",
     }));
     requestAnimationFrame(() => {
       paymentFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -560,10 +559,6 @@ const EventTracking = () => {
       toast.error("Vui lòng nhập số tiền thanh toán hợp lệ");
       return;
     }
-    if (!paymentForm.paymentMethod.trim()) {
-      toast.error("Vui lòng chọn hình thức thanh toán");
-      return;
-    }
     if (paymentLimit <= 0) {
       toast.error("Không còn số tiền cần thanh toán");
       return;
@@ -573,29 +568,19 @@ const EventTracking = () => {
       return;
     }
 
-    setPaying(true);
     try {
-      if (paymentForm.transactionId) {
-        await apiClient.patch<Transaction>(`/customer/transactions/${paymentForm.transactionId}/pay`, {
-          paymentMethod: paymentForm.paymentMethod,
-          note: paymentForm.note.trim() || undefined,
-        });
-      } else {
-        await apiClient.post<Transaction>("/customer/transactions", {
-          eventId: id,
-          contractId: paymentForm.contractId || undefined,
-          amount,
-          paymentMethod: paymentForm.paymentMethod,
-          note: paymentForm.note.trim() || undefined,
-        });
-      }
-      toast.success("Đã gửi thanh toán, vui lòng chờ admin xác nhận");
-      setPaymentForm((current) => ({ ...current, transactionId: "", note: "" }));
-      await load();
+      const result = await createPayment({
+        eventId: id,
+        contractId: paymentForm.contractId || undefined,
+        type: paymentForm.transactionId ? "installment" : "contract_payment",
+        amount,
+        description: selectedTransaction?.description || "Thanh toán hợp đồng qua SePay",
+      });
+      setCurrentPaymentId(result.paymentOrder.id);
+      setCurrentQRInfo(result.qr);
+      setPaymentModalOpen(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Gửi thanh toán thất bại");
-    } finally {
-      setPaying(false);
+      toast.error(error instanceof Error ? error.message : "Không thể tạo mã QR thanh toán");
     }
   };
 
@@ -1095,31 +1080,14 @@ const EventTracking = () => {
 
                 <div>
                   <label className="font-body text-sm text-foreground mb-1 block">Hình thức *</label>
-                  <Select value={paymentForm.paymentMethod} onValueChange={(value) => setPaymentForm((current) => ({ ...current, paymentMethod: value }))}>
-                    <SelectTrigger className="rounded-xl bg-surface-low border-none">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_METHODS.map((method) => (
-                        <SelectItem key={method} value={method}>{method}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="rounded-xl bg-surface-low px-3 py-2 font-body text-sm text-foreground">
+                    Quét mã QR qua SePay
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <label className="font-body text-sm text-foreground mb-1 block">Ghi chú</label>
-                <Textarea
-                  value={paymentForm.note}
-                  onChange={(event) => setPaymentForm((current) => ({ ...current, note: event.target.value }))}
-                  placeholder="Mã giao dịch / nội dung chuyển khoản"
-                  className="rounded-xl bg-surface-low border-none font-body min-h-[92px]"
-                />
-              </div>
-
               <Button variant="hero" className="w-full" onClick={handleSubmitPayment} disabled={paying || paymentLimit <= 0}>
-                <CreditCard size={16} /> {paying ? "Đang gửi..." : "Gửi thanh toán"}
+                <CreditCard size={16} /> {paying ? "Đang tạo mã QR..." : "Tạo mã QR thanh toán"}
               </Button>
             </div>
           </motion.div>
@@ -1706,6 +1674,18 @@ const EventTracking = () => {
           </motion.div>
         </div>
       )}
+
+      <PaymentQRModal
+        open={paymentModalOpen}
+        onOpenChange={setPaymentModalOpen}
+        paymentOrderId={currentPaymentId}
+        qrInfo={currentQRInfo}
+        onCompleted={() => {
+          toast.success("Thanh toán thành công!");
+          setPaymentForm((current) => ({ ...current, transactionId: "" }));
+          void load();
+        }}
+      />
     </div>
   );
 };
