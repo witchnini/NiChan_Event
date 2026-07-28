@@ -4,7 +4,10 @@ import { emitNotification } from "../../../lib/socket";
 import { createError } from "../../../middleware/errorHandler";
 import {
   emitCustomerNotification,
+  ensureEventCanBeManuallyCompleted,
   ensureCustomerTrackingInTransaction,
+  getEventProgressPercent,
+  notifyCustomerForEvent,
 } from "../../shared/event-lifecycle.service";
 import type {
   AdminProjectNameInput,
@@ -104,12 +107,18 @@ export const listAdminProjects = async (filters: {
     prisma.event.count({ where }),
   ]);
 
-  return { items, total };
+  return {
+    items: items.map((item) => ({
+      ...item,
+      progressPercent: getEventProgressPercent(item.status, item.progressPercent),
+    })),
+    total,
+  };
 };
 
 export const getAdminProjectById = async (projectId: string) => {
   const project = await prisma.event.findFirst({
-    where: { id: projectId, consultationRequest: { status: "confirmed" } },
+    where: { id: projectId },
     include: {
       customerUser: { select: { id: true, displayName: true, email: true, phone: true } },
       organizerUser: { select: { id: true, displayName: true, email: true, phone: true, avatarUrl: true } },
@@ -136,16 +145,20 @@ export const getAdminProjectById = async (projectId: string) => {
   });
 
   if (!project) throw createError("NOT_FOUND", "Project not found", 404);
-  return project;
+  return {
+    ...project,
+    progressPercent: getEventProgressPercent(project.status, project.progressPercent),
+  };
 };
 
 export const getAdminKanban = async (projectId: string) => {
   const event = await prisma.event.findFirst({
-    where: { id: projectId, consultationRequest: { status: "confirmed" } },
+    where: { id: projectId },
     select: {
       id: true,
       name: true,
       status: true,
+      eventDate: true,
       progressPercent: true,
       customerUser: { select: { id: true, displayName: true } },
       organizerUser: { select: { id: true, displayName: true } },
@@ -167,7 +180,13 @@ export const getAdminKanban = async (projectId: string) => {
     tasks: tasks.filter((task) => task.status === column.id),
   }));
 
-  return { project: event, columns };
+  return {
+    project: {
+      ...event,
+      progressPercent: getEventProgressPercent(event.status, event.progressPercent),
+    },
+    columns,
+  };
 };
 
 const buildStatusNotification = (eventName: string, status: AdminProjectStatusInput["status"]) => {
@@ -230,6 +249,9 @@ export const updateAdminProjectStatus = async (
   if (event.status === input.status) return event;
   if (event.status === "cancelled") {
     throw createError("CONFLICT", "A cancelled project cannot be resumed", 409);
+  }
+  if (input.status === "completed") {
+    await ensureEventCanBeManuallyCompleted(projectId);
   }
 
   if (["contracted", "quoted", "planning", "in_progress", "completed"].includes(input.status)) {
@@ -371,7 +393,7 @@ export const updateAdminProjectName = async (
     throw createError("CONFLICT", "A cancelled project cannot be modified", 409);
   if (project.name === input.name) return project;
 
-  return prisma.$transaction(async (tx) => {
+  const updatedProject = await prisma.$transaction(async (tx) => {
     const updatedProject = await tx.event.update({
       where: { id: projectId },
       data: { name: input.name },
@@ -403,6 +425,13 @@ export const updateAdminProjectName = async (
 
     return updatedProject;
   });
+
+  await notifyCustomerForEvent(projectId, {
+    type: "event",
+    title: "Thông tin sự kiện đã được cập nhật",
+    message: `Tên sự kiện đã được đổi từ "${project.name}" thành "${input.name}".`,
+  });
+  return updatedProject;
 };
 
 export const updateAdminProjectOrganizer = async (

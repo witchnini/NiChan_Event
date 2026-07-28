@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
+import { getNotificationRoute } from "@/utils/notificationRoute";
 
 type NotificationItem = {
   id: string;
@@ -14,6 +16,8 @@ type NotificationItem = {
   type: string;
   isRead: boolean;
   createdAt: string;
+  entityType?: string | null;
+  entityId?: string | null;
 };
 
 const categoryColors: Record<string, string> = {
@@ -45,6 +49,7 @@ const OrganizerNotifications = () => {
   const [filterType, setFilterType] = useState("all");
   const [filterRead, setFilterRead] = useState("all");
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
   const loadNotifications = async () => {
     setLoading(true);
@@ -104,6 +109,18 @@ const OrganizerNotifications = () => {
     await loadNotifications();
   };
 
+  const openNotification = async (notification: NotificationItem) => {
+    try {
+      if (!notification.isRead) {
+        await apiClient.patch(`/organizer/notifications/${notification.id}/read`);
+      }
+    } catch {
+      toast.error("Không thể cập nhật trạng thái thông báo");
+    } finally {
+      navigate(getNotificationRoute(notification, "organizer"));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -140,7 +157,7 @@ const OrganizerNotifications = () => {
           </div>
         ) : (
           filtered.map((n, i) => (
-            <motion.div key={n.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }} className={`flex items-start gap-4 p-4 rounded-xl transition-all ${!n.isRead ? "bg-secondary/5 shadow-ambient" : "bg-surface-lowest hover:bg-surface-low"}`}>
+            <motion.div key={n.id} role="button" tabIndex={0} onClick={() => void openNotification(n)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void openNotification(n); }} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }} className={`flex items-start gap-4 p-4 rounded-xl cursor-pointer transition-all ${!n.isRead ? "bg-secondary/5 shadow-ambient" : "bg-surface-lowest hover:bg-surface-low"}`}>
               <div className="mt-1 shrink-0">{!n.isRead ? <Mail size={18} className="text-secondary" /> : <MailOpen size={18} className="text-muted-foreground" />}</div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -151,7 +168,7 @@ const OrganizerNotifications = () => {
                 <p className="font-body text-xs text-muted-foreground mt-1">{new Date(n.createdAt).toLocaleString("vi-VN")}</p>
               </div>
               {!n.isRead && (
-                <button onClick={() => markAsRead(n.id)} className="p-1.5 rounded-lg hover:bg-surface-low text-muted-foreground hover:text-foreground transition-colors">
+                <button onClick={(event) => { event.stopPropagation(); void markAsRead(n.id); }} className="p-1.5 rounded-lg hover:bg-surface-low text-muted-foreground hover:text-foreground transition-colors">
                   <Check size={14} />
                 </button>
               )}

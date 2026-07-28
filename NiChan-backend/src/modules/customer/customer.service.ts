@@ -2,6 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { createError } from "../../middleware/errorHandler";
 import { emitNewMessage, emitMessageDeleted, emitNotification } from "../../lib/socket";
+import {
+  emitCustomerNotification,
+  getEventProgressPercent,
+  tryFinalizeSettlementPaymentInTransaction,
+} from "../shared/event-lifecycle.service";
 import { z } from "zod";
 
 type Tx = Prisma.TransactionClient;
@@ -10,6 +15,16 @@ const billableContractStatuses = ["sent", "active", "liquidated"];
 const eventTrackingContractStatuses = [...billableContractStatuses, "cancelled"];
 const payableTransactionStatuses = ["pending", "completed"];
 const toNumber = (value: unknown) => Number(value ?? 0);
+
+const getCustomerVisibleBudget = (event: {
+  budgetEstimated?: unknown;
+  contracts?: { totalValue: unknown; status: string }[];
+}) => {
+  const contractTotal = (event.contracts ?? [])
+    .filter((contract) => billableContractStatuses.includes(contract.status))
+    .reduce((sum, contract) => sum + toNumber(contract.totalValue), 0);
+  return contractTotal > 0 ? contractTotal : event.budgetEstimated;
+};
 
 const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
 const contractLineItemsInclude = {
@@ -64,7 +79,7 @@ const getInstallmentNumber = (description: string, fallback: number) => {
   return match ? Number(match[1]) : fallback;
 };
 
-const syncLiquidatedContractPayments = async (filters: {
+const syncSettlementContractPayments = async (filters: {
   customerUserId: string;
   eventId?: string;
   contractId?: string;
@@ -73,14 +88,23 @@ const syncLiquidatedContractPayments = async (filters: {
     const contracts = await tx.contract.findMany({
       where: {
         customerUserId: filters.customerUserId,
-        status: "liquidated",
+        status: { in: ["active", "liquidated"] },
+        versions: { some: { purpose: "settlement" } },
         ...(filters.eventId ? { eventId: filters.eventId } : {}),
         ...(filters.contractId ? { id: filters.contractId } : {}),
       },
       select: {
         id: true,
         contractCode: true,
+        status: true,
         totalValue: true,
+        event: {
+          select: {
+            id: true,
+            status: true,
+            consultationRequestId: true,
+          },
+        },
         transactions: {
           where: { status: { in: payableTransactionStatuses } },
           select: {
@@ -101,7 +125,6 @@ const syncLiquidatedContractPayments = async (filters: {
         .filter(
           (transaction) =>
             transaction.status === "pending" &&
-            !transaction.paymentMethod &&
             isSettlementFinalInstallment(transaction.description),
         )
         .sort((a, b) => b.transactionDate.getTime() - a.transactionDate.getTime())[0];
@@ -109,7 +132,11 @@ const syncLiquidatedContractPayments = async (filters: {
       if (!finalInstallment) continue;
 
       const settledAmount = contract.transactions
-        .filter((transaction) => transaction.id !== finalInstallment.id)
+        .filter(
+          (transaction) =>
+            transaction.id !== finalInstallment.id &&
+            transaction.status === "completed",
+        )
         .reduce((sum, transaction) => sum + toNumber(transaction.amount), 0);
       const remainingAmount = Math.max(toNumber(contract.totalValue) - settledAmount, 0);
 
@@ -124,6 +151,39 @@ const syncLiquidatedContractPayments = async (filters: {
         continue;
       }
 
+      if (contract.status === "liquidated") {
+        await tx.contract.update({
+          where: { id: contract.id },
+          data: { status: "active" },
+        });
+      }
+      if (contract.event.status === "completed") {
+        await tx.event.update({
+          where: { id: contract.event.id },
+          data: {
+            status: "in_progress",
+            progressPercent: 99,
+            completedAt: null,
+          },
+        });
+        if (contract.event.consultationRequestId) {
+          await tx.consultationRequest.update({
+            where: { id: contract.event.consultationRequestId },
+            data: { status: "in_progress" },
+          });
+        }
+        const finalMilestone = await tx.eventMilestone.findFirst({
+          where: { eventId: contract.event.id },
+          orderBy: { sortOrder: "desc" },
+          select: { id: true },
+        });
+        if (finalMilestone) {
+          await tx.eventMilestone.update({
+            where: { id: finalMilestone.id },
+            data: { status: "todo" },
+          });
+        }
+      }
       if (toNumber(finalInstallment.amount) === remainingAmount) continue;
 
       const installmentNumber = getInstallmentNumber(finalInstallment.description, contract.transactions.length);
@@ -131,6 +191,8 @@ const syncLiquidatedContractPayments = async (filters: {
         where: { id: finalInstallment.id },
         data: {
           amount: remainingAmount,
+          // Khoản chờ cũ không còn đúng với quyết toán mới: yêu cầu khách tạo lại thanh toán.
+          paymentMethod: null,
           description: `Thanh toán ${contract.contractCode} - Đợt ${installmentNumber}: Thanh toán sau nghiệm thu (phần còn lại sau quyết toán)`,
         },
       });
@@ -141,7 +203,7 @@ const syncLiquidatedContractPayments = async (filters: {
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
 export const getCustomerDashboard = async (customerUserId: string) => {
-  await syncLiquidatedContractPayments({ customerUserId });
+  await syncSettlementContractPayments({ customerUserId });
   const [events, contracts, transactions] = await prisma.$transaction([
     prisma.event.findMany({
       where: { customerUserId },
@@ -152,14 +214,20 @@ export const getCustomerDashboard = async (customerUserId: string) => {
         status: true,
         eventDate: true,
         progressPercent: true,
+        budgetEstimated: true,
         organizerUser: { select: { id: true, displayName: true, avatarUrl: true } },
         customerUser: { select: { id: true, displayName: true } },
+        contracts: {
+          where: { status: { in: billableContractStatuses } },
+          select: { totalValue: true, status: true },
+        },
         consultationRequest: {
           select: {
             id: true,
             customerName: true,
             eventType: true,
             note: true,
+            budgetRange: true,
           },
         },
       },
@@ -188,7 +256,17 @@ export const getCustomerDashboard = async (customerUserId: string) => {
   });
 
   const requests = await getCustomerRequests(customerUserId);
-  return { events, requests: requests.slice(0, 5), recentActivities, contracts, transactions };
+  return {
+    events: events.map((event) => ({
+      ...event,
+      progressPercent: getEventProgressPercent(event.status, event.progressPercent),
+      budgetEstimated: getCustomerVisibleBudget(event),
+    })),
+    requests: requests.slice(0, 5),
+    recentActivities,
+    contracts,
+    transactions,
+  };
 };
 
 export const getCustomerRequests = async (customerUserId: string) => {
@@ -282,7 +360,7 @@ export const getCustomerEvents = async (
   filters: { status?: string; upcomingOnly?: string },
 ) => {
   const now = new Date();
-  return prisma.event.findMany({
+  const events = await prisma.event.findMany({
     where: {
       customerUserId,
       ...(filters.status ? { status: filters.status } : {}),
@@ -299,16 +377,26 @@ export const getCustomerEvents = async (
           customerName: true,
           eventType: true,
           note: true,
+          budgetRange: true,
         },
+      },
+      contracts: {
+        where: { status: { in: billableContractStatuses } },
+        select: { totalValue: true, status: true },
       },
       _count: { select: { tasks: true, milestones: true } },
     },
     orderBy: { createdAt: "desc" },
   });
+  return events.map((event) => ({
+    ...event,
+    progressPercent: getEventProgressPercent(event.status, event.progressPercent),
+    budgetEstimated: getCustomerVisibleBudget(event),
+  }));
 };
 
 export const getCustomerEventById = async (eventId: string, customerUserId: string) => {
-  await syncLiquidatedContractPayments({ customerUserId, eventId });
+  await syncSettlementContractPayments({ customerUserId, eventId });
   const event = await prisma.event.findFirst({
     where: { id: eventId },
     include: {
@@ -320,6 +408,7 @@ export const getCustomerEventById = async (eventId: string, customerUserId: stri
           customerName: true,
           eventType: true,
           note: true,
+          budgetRange: true,
         },
       },
       milestones: { orderBy: { sortOrder: "asc" } },
@@ -354,7 +443,11 @@ export const getCustomerEventById = async (eventId: string, customerUserId: stri
   if (!event) throw createError("NOT_FOUND", "Event not found", 404);
   if (event.customerUserId !== customerUserId)
     throw createError("FORBIDDEN", "You do not have access to this event", 403);
-  return event;
+  return {
+    ...event,
+    progressPercent: getEventProgressPercent(event.status, event.progressPercent),
+    budgetEstimated: getCustomerVisibleBudget(event),
+  };
 };
 
 export const getEventMilestones = async (eventId: string, customerUserId: string) => {
@@ -622,7 +715,7 @@ export const updateReview = async (
 // ─── Contracts & Transactions ─────────────────────────────────────────────────
 
 export const getCustomerContracts = async (customerUserId: string) => {
-  await syncLiquidatedContractPayments({ customerUserId });
+  await syncSettlementContractPayments({ customerUserId });
   return prisma.contract.findMany({
     where: { customerUserId },
     include: {
@@ -657,7 +750,7 @@ export const getCustomerContracts = async (customerUserId: string) => {
 };
 
 export const getCustomerContractById = async (contractId: string, customerUserId: string) => {
-  await syncLiquidatedContractPayments({ customerUserId, contractId });
+  await syncSettlementContractPayments({ customerUserId, contractId });
   const contract = await prisma.contract.findUnique({
     where: { id: contractId },
     include: {
@@ -868,7 +961,7 @@ export const respondToContract = async (
 };
 
 export const getCustomerTransactions = async (customerUserId: string) => {
-  await syncLiquidatedContractPayments({ customerUserId });
+  await syncSettlementContractPayments({ customerUserId });
   return prisma.transaction.findMany({
     where: { event: { customerUserId } },
     include: customerTransactionInclude,
@@ -1223,10 +1316,19 @@ export const submitSettlementFeedback = async (
   });
   if (!contract) throw createError("NOT_FOUND", "Hợp đồng không hợp lệ hoặc chưa sẵn sàng nghiệm thu.", 404);
 
-  // Verify all lineItemIds belong to this contract's versions
+  const latestSettlement = await prisma.contractVersion.findFirst({
+    where: { contractId, purpose: "settlement" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (!latestSettlement) {
+    throw createError("NOT_FOUND", "Biên bản nghiệm thu chưa được tạo.", 404);
+  }
+
+  // Chỉ nhận phản hồi cho phiên bản nghiệm thu mới nhất, tránh gửi nhầm hạng mục cũ.
   const validLineItemIds = await prisma.contractLineItem.findMany({
     where: {
-      contractVersion: { contractId },
+      contractVersionId: latestSettlement.id,
       id: { in: parsed.items.map((i) => i.lineItemId) },
     },
     select: { id: true },
@@ -1296,7 +1398,13 @@ export const submitSettlementFeedback = async (
       ),
     );
 
-    return { feedbacks, notifications };
+    const finalization = await tryFinalizeSettlementPaymentInTransaction(
+      tx,
+      contractId,
+      customerUserId,
+    );
+
+    return { feedbacks, notifications, finalization };
   });
 
   // Emit real-time notifications
@@ -1310,6 +1418,9 @@ export const submitSettlementFeedback = async (
       entityId: notification.entityId,
       createdAt: notification.createdAt,
     });
+  }
+  if (result.finalization.notification) {
+    emitCustomerNotification(result.finalization.notification);
   }
 
   return result.feedbacks;

@@ -4,7 +4,10 @@ import { emitNotification } from "../../../lib/socket";
 import { createError } from "../../../middleware/errorHandler";
 import {
   emitCustomerNotification,
+  ensureEventCanBeManuallyCompleted,
   ensureCustomerTrackingInTransaction,
+  getEventProgressPercent,
+  notifyCustomerForEvent,
 } from "../../shared/event-lifecycle.service";
 import { TASK_STATUS_TRANSITIONS, TaskStatus } from "../../../types/enums";
 import type {
@@ -64,7 +67,7 @@ const buildEventDataFromRequest = (request: {
 // ─── Projects List ────────────────────────────────────────────────────────────
 
 export const listOrganizerProjects = async (organizerUserId: string) => {
-  return prisma.event.findMany({
+  const projects = await prisma.event.findMany({
     where: { organizerUserId },
     select: {
       id: true,
@@ -94,6 +97,11 @@ export const listOrganizerProjects = async (organizerUserId: string) => {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  return projects.map((project) => ({
+    ...project,
+    progressPercent: getEventProgressPercent(project.status, project.progressPercent),
+  }));
 };
 
 export const listOrganizerRequestAssignments = async (organizerUserId: string) => {
@@ -509,9 +517,18 @@ export const recalculateProjectProgress = async (
   tx: Prisma.TransactionClient,
   eventId: string,
 ) => {
-  const total = await tx.projectTask.count({ where: { eventId } });
+  const [event, total] = await Promise.all([
+    tx.event.findUnique({
+      where: { id: eventId },
+      select: { status: true },
+    }),
+    tx.projectTask.count({ where: { eventId } }),
+  ]);
+  if (!event) throw createError("NOT_FOUND", "Event not found", 404);
+
   const done = total > 0 ? await tx.projectTask.count({ where: { eventId, status: "done" } }) : 0;
-  const progressPercent = total > 0 ? Math.round((done / total) * 100) : 0;
+  const taskProgress = total > 0 ? Math.round((done / total) * 100) : 0;
+  const progressPercent = getEventProgressPercent(event.status, taskProgress);
 
   return tx.event.update({
     where: { id: eventId },
@@ -563,7 +580,13 @@ export const getKanban = async (projectId: string, organizerUserId: string) => {
     tasks: tasks.filter((t) => t.status === col.id),
   }));
 
-  return { project: event, columns };
+  return {
+    project: {
+      ...event,
+      progressPercent: getEventProgressPercent(event.status, event.progressPercent),
+    },
+    columns,
+  };
 };
 
 export const getGantt = async (projectId: string, organizerUserId: string) => {
@@ -663,6 +686,9 @@ export const updateProjectStatus = async (
   if (event.status === input.status) return event;
   if (event.status === "cancelled") {
     throw createError("CONFLICT", "A cancelled project cannot be resumed", 409);
+  }
+  if (input.status === "completed") {
+    await ensureEventCanBeManuallyCompleted(projectId);
   }
 
   if (isCustomerTrackingStatus(input.status)) {
@@ -764,13 +790,13 @@ export const createTask = async (
         ? { organizerUserId, organizerAssignmentStatus: "accepted" }
         : {}),
     },
-    select: { id: true, status: true },
+    select: { id: true, name: true, status: true, customerUserId: true },
   });
   if (!event) throw createError("NOT_FOUND", "Event not found", 404);
   if (event.status === "cancelled")
     throw createError("CONFLICT", "Cannot add tasks to a cancelled project", 409);
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const task = await tx.projectTask.create({
       data: {
         eventId: input.eventId,
@@ -790,8 +816,33 @@ export const createTask = async (
     });
 
     await recalculateProjectProgress(tx, input.eventId);
-    return task;
+    const notification = await tx.notification.create({
+      data: {
+        userId: event.customerUserId,
+        scope: "customer",
+        type: "planning",
+        title: "Kế hoạch sự kiện đã được cập nhật",
+        message: `Ban tổ chức đã thêm kế hoạch "${task.title}" cho sự kiện ${event.name}.`,
+        entityType: "event",
+        entityId: event.id,
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        title: true,
+        message: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
+      },
+    });
+
+    return { task, notification };
   });
+
+  emitCustomerNotification(result.notification);
+  return result.task;
 };
 
 const getTaskForOrganizer = async (taskId: string, organizerUserId?: string) => {
@@ -832,7 +883,7 @@ export const updateTask = async (
   const existing = await getTaskForOrganizer(taskId, organizerUserId);
   if (!existing) throw createError("NOT_FOUND", "Task not found", 404);
 
-  return prisma.projectTask.update({
+  const updated = await prisma.projectTask.update({
     where: { id: taskId },
     data: {
       ...(data.title !== undefined ? { title: data.title } : {}),
@@ -844,6 +895,13 @@ export const updateTask = async (
     },
     include: { assignee: { select: { id: true, displayName: true, avatarUrl: true } } },
   });
+
+  await notifyCustomerForEvent(existing.eventId, {
+    type: "planning",
+    title: "Kế hoạch sự kiện đã được cập nhật",
+    message: `Ban tổ chức đã cập nhật kế hoạch "${updated.title}".`,
+  });
+  return updated;
 };
 
 export const updateTaskStatus = async (
@@ -867,7 +925,7 @@ export const updateTaskStatus = async (
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const updated = await tx.projectTask.update({
       where: { id: taskId },
       data: {
@@ -888,6 +946,13 @@ export const updateTaskStatus = async (
     await recalculateProjectProgress(tx, task.eventId);
     return updated;
   });
+
+  await notifyCustomerForEvent(task.eventId, {
+    type: "planning",
+    title: "Tiến độ kế hoạch đã thay đổi",
+    message: `Một công việc trong kế hoạch sự kiện đã chuyển sang trạng thái ${input.status}.`,
+  });
+  return updated;
 };
 
 export const deleteTask = async (taskId: string, organizerUserId?: string) => {
@@ -899,5 +964,11 @@ export const deleteTask = async (taskId: string, organizerUserId?: string) => {
     await tx.taskStatusHistory.deleteMany({ where: { taskId } });
     await tx.projectTask.delete({ where: { id: taskId } });
     await recalculateProjectProgress(tx, existing.eventId);
+  });
+
+  await notifyCustomerForEvent(existing.eventId, {
+    type: "planning",
+    title: "Kế hoạch sự kiện đã được cập nhật",
+    message: "Ban tổ chức đã loại bỏ một công việc khỏi kế hoạch sự kiện.",
   });
 };

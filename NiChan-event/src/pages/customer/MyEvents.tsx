@@ -26,7 +26,12 @@ type CustomerEvent = {
   budgetEstimated?: string | number | null;
   organizerUser?: { displayName: string } | null;
   customerUser?: { displayName: string } | null;
-  consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
+  consultationRequest?: {
+    customerName?: string | null;
+    eventType?: string | null;
+    note?: string | null;
+    budgetRange?: string | null;
+  } | null;
 };
 
 type CustomerRequest = {
@@ -50,6 +55,10 @@ const statusFilters = [
 ];
 
 const money = (value?: string | number | null) => Number(value || 0).toLocaleString("vi-VN") + "đ";
+const eventBudget = (event: CustomerEvent) =>
+  Number(event.budgetEstimated || 0) > 0
+    ? money(event.budgetEstimated)
+    : event.consultationRequest?.budgetRange || undefined;
 
 const MyEvents = () => {
   const [events, setEvents] = useState<CustomerEvent[]>([]);
@@ -137,7 +146,7 @@ const MyEvents = () => {
                   guestCount={event.guestCount}
                   managerName={event.organizerUser?.displayName}
                   progressPercent={event.progressPercent}
-                  budget={money(event.budgetEstimated)}
+                  budget={eventBudget(event)}
                 />
               </motion.div>
             ))}

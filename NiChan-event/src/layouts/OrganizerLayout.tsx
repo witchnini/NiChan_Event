@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, FolderKanban, MessageSquare, Wallet, FileBarChart,
   Globe, LogOut, Menu, X, ChevronLeft, Bell,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getNotificationRoute } from "@/utils/notificationRoute";
 import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
@@ -40,6 +41,9 @@ type AppNotification = {
   message: string;
   isRead: boolean;
   createdAt: string;
+  type?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
 };
 
 const formatNotificationTime = (value: string) =>
@@ -58,6 +62,7 @@ const OrganizerLayout = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [profile, setProfile] = useState<OrganizerProfileResponse | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Lắng nghe tin nhắn chat mới — hiện toast + browser notification + âm thanh
   const { totalUnread: unreadChatCount, clearAll: clearChatUnread } = useChatNotification();
@@ -98,11 +103,11 @@ const OrganizerLayout = () => {
   // Real-time: nhận thông báo mới qua Socket.IO và thêm vào đầu danh sách.
   useEffect(() => {
     const socket = getSocket();
-    const handleNotification = (payload: { id: string; message: string; createdAt: string }) => {
+    const handleNotification = (payload: AppNotification) => {
       setNotifications((prev) => (
         prev.some((n) => n.id === payload.id)
           ? prev
-          : [{ id: payload.id, message: payload.message, isRead: false, createdAt: payload.createdAt }, ...prev]
+          : [{ ...payload, isRead: false }, ...prev]
       ));
     };
     socket.on("notification", handleNotification);
@@ -141,6 +146,12 @@ const OrganizerLayout = () => {
     } catch {
       toast.error("Không thể cập nhật tất cả thông báo");
     }
+  };
+
+  const openNotification = async (notification: AppNotification) => {
+    await markAsRead(notification.id);
+    setNotifOpen(false);
+    navigate(getNotificationRoute(notification, "organizer"));
   };
 
   const handleLogout = async () => {
@@ -250,7 +261,7 @@ const OrganizerLayout = () => {
                         {notifications.map((notification) => (
                           <button
                             key={notification.id}
-                            onClick={() => markAsRead(notification.id)}
+                            onClick={() => void openNotification(notification)}
                             className={`w-full text-left p-4 border-b border-border hover:bg-surface-low transition-colors ${!notification.isRead ? "bg-secondary/5" : ""}`}
                           >
                             <div className="flex items-start gap-3">

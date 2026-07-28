@@ -1,7 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, Calendar, Users, DollarSign, FileText, Clock, AlertCircle, ArrowUpRight } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowUpRight,
+  Calendar,
+  Clock,
+  DollarSign,
+  FileSignature,
+  FileText,
+  ListTodo,
+  RefreshCw,
+  TrendingDown,
+  TrendingUp,
+  UserRoundCheck,
+  Users,
+} from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { apiClient } from "@/services/apiClient";
 
 type AdminDashboardResponse = {
@@ -19,6 +36,11 @@ type AdminDashboardResponse = {
     customersTrend: number;
     monthlyRevenue: number;
     revenueTrend: number;
+  };
+  actionItems: {
+    unassignedRequests: number;
+    overdueTasks: number;
+    contractsAwaitingResponse: number;
   };
   monthlyRevenue: Record<string, number>;
   eventTypes: { type: string; _count: { type: number } }[];
@@ -63,38 +85,81 @@ const reqStatusColor  = Object.fromEntries(requestStatuses.map(s => [s.value, s.
 const formatMoney = (value: number) => `${Math.round(value / 1_000_000)}tr`;
 const formatDate = (value?: string | null) => (value ? new Date(value).toLocaleDateString("vi-VN") : "Chưa cập nhật");
 const formatTrend = (value: number) => `${value > 0 ? "+" : ""}${value}% so với tháng trước`;
+const formatMonth = (value: string) => {
+  const [year, month] = value.split("-").map(Number);
+  return `T${month}/${String(year).slice(-2)}`;
+};
+
+const eventTypeLabels: Record<string, string> = {
+  wedding: "Tiệc cưới",
+  conference: "Hội nghị",
+  gala: "Gala",
+  opening: "Khai trương",
+  birthday: "Sinh nhật",
+  corporate: "Doanh nghiệp",
+};
+
+const DashboardSkeleton = () => (
+  <div className="space-y-6" aria-label="Đang tải dashboard">
+    <div className="flex items-center justify-between">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-4 w-72" />
+      </div>
+      <Skeleton className="h-9 w-28" />
+    </div>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-36 rounded-xl" />
+      ))}
+    </div>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <Skeleton className="h-80 rounded-xl lg:col-span-2" />
+      <Skeleton className="h-80 rounded-xl" />
+    </div>
+  </div>
+);
 
 const AdminDashboard = () => {
   const [data, setData] = useState<AdminDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const mountedRef = useRef(true);
+
+  const loadDashboard = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const response = await apiClient.get<AdminDashboardResponse>("/admin/dashboard");
+      if (!mountedRef.current) return;
+      setData(response);
+      setLastUpdated(new Date());
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setError(err instanceof Error ? err.message : "Không thể tải dashboard admin");
+    } finally {
+      if (mountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await apiClient.get<AdminDashboardResponse>("/admin/dashboard");
-        if (!cancelled) setData(response);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Không thể tải dashboard admin");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    load();
+    mountedRef.current = true;
+    void loadDashboard();
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
-  }, []);
+  }, [loadDashboard]);
 
   const monthlyRevenue = useMemo(
     () =>
       Object.entries(data?.monthlyRevenue || {}).map(([month, revenue]) => ({
-        month,
+        month: formatMonth(month),
         revenue: Math.round(revenue / 1_000_000),
       })),
     [data],
@@ -103,15 +168,27 @@ const AdminDashboard = () => {
   const eventTypes = useMemo(
     () =>
       (data?.eventTypes || []).map((item, index) => ({
-        name: item.type,
+        name: eventTypeLabels[item.type.toLowerCase()] ?? item.type,
         value: item._count.type,
         color: pieColors[index % pieColors.length],
       })),
     [data],
   );
 
-  if (loading) return <div className="font-body text-muted-foreground">Đang tải dashboard...</div>;
-  if (error || !data) return <div className="font-body text-destructive">{error || "Không có dữ liệu dashboard"}</div>;
+  if (loading) return <DashboardSkeleton />;
+  if (error && !data) {
+    return (
+      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-8 text-center">
+        <AlertCircle className="mx-auto mb-3 text-destructive" size={32} />
+        <p className="font-body font-semibold text-foreground">Không thể tải dashboard</p>
+        <p className="mt-1 font-body text-sm text-muted-foreground">{error}</p>
+        <Button className="mt-4" variant="outline" onClick={() => void loadDashboard()}>
+          <RefreshCw size={14} /> Thử lại
+        </Button>
+      </div>
+    );
+  }
+  if (!data) return null;
 
   const stats = [
     { label: "Doanh thu tháng", value: formatMoney(data.summary.monthlyRevenue), trend: data.summary.revenueTrend, sub: `${data.summary.activeEvents} sự kiện đang chạy`, icon: DollarSign, color: "text-primary" },
@@ -120,8 +197,53 @@ const AdminDashboard = () => {
     { label: "Khách hàng", value: String(data.summary.totalCustomers), trend: data.summary.customersTrend, sub: `${data.summary.newCustomersThisMonth} đăng ký mới tháng này`, icon: Users, color: "text-secondary" },
   ];
 
+  const actionItems = [
+    {
+      label: "Yêu cầu chưa phân công",
+      value: data.actionItems.unassignedRequests,
+      description: "Cần chỉ định người tổ chức phụ trách",
+      icon: UserRoundCheck,
+      path: "/admin/yeu-cau",
+    },
+    {
+      label: "Công việc quá hạn",
+      value: data.actionItems.overdueTasks,
+      description: "Cần kiểm tra tiến độ dự án",
+      icon: ListTodo,
+      path: "/admin/du-an",
+    },
+    {
+      label: "Hợp đồng chờ phản hồi",
+      value: data.actionItems.contractsAwaitingResponse,
+      description: "Đã gửi và đang chờ khách hàng",
+      icon: FileSignature,
+      path: "/admin/hop-dong",
+    },
+  ];
+
   return (
     <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="font-serif text-headline-lg text-foreground">Tổng quan vận hành</h1>
+          <p className="mt-1 font-body text-sm text-muted-foreground">
+            Theo dõi doanh thu, yêu cầu và tiến độ sự kiện trên toàn hệ thống.
+            {lastUpdated && ` Cập nhật lúc ${lastUpdated.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}.`}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void loadDashboard(true)} disabled={refreshing}>
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
+          {refreshing ? "Đang cập nhật" : "Làm mới"}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 font-body text-sm text-destructive">
+          <AlertCircle size={16} />
+          Không thể cập nhật dữ liệu mới. Dashboard đang hiển thị dữ liệu lần tải gần nhất.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => {
           const positive = stat.trend >= 0;
@@ -145,6 +267,36 @@ const AdminDashboard = () => {
             </motion.div>
           );
         })}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {actionItems.map((item, index) => (
+          <motion.div
+            key={item.label}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 + index * 0.08 }}
+          >
+            <Link
+              to={item.path}
+              className="group flex h-full items-center gap-4 rounded-xl border border-border bg-surface-lowest p-4 shadow-ambient transition-colors hover:border-primary/30 hover:bg-primary/5"
+            >
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <item.icon size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-body text-sm font-semibold text-foreground">{item.label}</p>
+                  <span className={`font-serif text-headline-md ${item.value > 0 ? "text-primary" : "text-secondary"}`}>
+                    {item.value}
+                  </span>
+                </div>
+                <p className="mt-0.5 font-body text-xs text-muted-foreground">{item.description}</p>
+              </div>
+              <ArrowUpRight className="text-muted-foreground transition-colors group-hover:text-primary" size={16} />
+            </Link>
+          </motion.div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -199,7 +351,7 @@ const AdminDashboard = () => {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
           <div className="flex items-center justify-between mb-6">
             <h3 className="font-serif text-headline-md text-foreground">Yêu cầu gần đây</h3>
-            <a href="/admin/yeu-cau" className="text-primary font-body text-sm hover:underline flex items-center gap-1">Xem tất cả <ArrowUpRight size={14} /></a>
+            <Link to="/admin/yeu-cau" className="text-primary font-body text-sm hover:underline flex items-center gap-1">Xem tất cả <ArrowUpRight size={14} /></Link>
           </div>
           <div className="space-y-4">
             {data.recentRequests.map((req) => (
@@ -222,7 +374,7 @@ const AdminDashboard = () => {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
           <div className="flex items-center justify-between mb-6">
             <h3 className="font-serif text-headline-md text-foreground">Sự kiện sắp tới</h3>
-            <a href="/admin/du-an" className="text-primary font-body text-sm hover:underline flex items-center gap-1">Xem tất cả <ArrowUpRight size={14} /></a>
+            <Link to="/admin/du-an" className="text-primary font-body text-sm hover:underline flex items-center gap-1">Xem tất cả <ArrowUpRight size={14} /></Link>
           </div>
           <div className="space-y-4">
             {data.upcomingEvents.map((event) => (

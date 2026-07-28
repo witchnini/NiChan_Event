@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Ban,
   Calculator,
@@ -69,6 +69,41 @@ type SettlementPreview = {
   budgetItemCount: number;
 };
 
+type SettlementFeedback = {
+  id: string;
+  status: "agreed" | "feedback";
+  feedbackNote?: string | null;
+  updatedAt: string;
+  customer?: { id: string; displayName: string };
+};
+
+type SettlementFeedbackReview = {
+  contract: {
+    id: string;
+    contractCode: string;
+    status: string;
+    totalValue: string | number;
+    event: { id: string; name: string };
+    customerUser: { id: string; displayName: string; email?: string | null; phone?: string | null };
+  };
+  settlementVersion: {
+    id: string;
+    versionLabel: string;
+    scopeText: string;
+    generalTerms: string;
+    createdAt: string;
+    lineItems: Array<ContractLineItem & { feedback?: SettlementFeedback | null }>;
+  };
+  summary: {
+    total: number;
+    agreed: number;
+    feedback: number;
+    pending: number;
+    submittedAt?: string | null;
+    needsRevision: boolean;
+  };
+};
+
 type ContractDocument = {
   id: string;
   name: string;
@@ -101,6 +136,7 @@ type Contract = {
   createdBy?: { id: string; displayName: string } | null;
   versions?: ContractVersion[];
   documents?: ContractDocument[];
+  settlementFeedbacks?: Array<{ id: string }>;
 };
 
 type Project = {
@@ -145,6 +181,7 @@ type ServiceCategoryItem = {
 };
 
 type LineItemForm = {
+  sourceLineItemId?: string;
   category: string;
   description: string;
   unit: string;
@@ -181,6 +218,7 @@ type LineItemEditorOptions = {
   importBudgetDisabled: boolean;
   importBudgetLabel: string;
   helperText: string;
+  feedbackByLineItemId?: Record<string, SettlementFeedback | null>;
 };
 
 const statusList = [
@@ -211,6 +249,14 @@ const statusColors: Record<string, string> = {
 
 const hasCustomerFeedback = (contract?: Pick<Contract, "rejectionNote"> | null) =>
   Boolean(contract?.rejectionNote?.trim());
+
+const hasSettlementFeedback = (
+  contract?: Pick<Contract, "settlementFeedbacks"> | null,
+) => Boolean(contract?.settlementFeedbacks?.length);
+
+const hasSettlementVersion = (
+  contract?: Pick<Contract, "versions"> | null,
+) => Boolean(contract?.versions?.some((version) => version.purpose === "settlement"));
 
 const unitOptions = [
   "gói",
@@ -1036,6 +1082,7 @@ const lineItemFromTemplate = (
   template: ContractLineItemTemplate,
   current?: LineItemForm,
 ): LineItemForm => ({
+  sourceLineItemId: current?.sourceLineItemId,
   category: template.category,
   description: template.description,
   unit: template.unit,
@@ -1057,6 +1104,7 @@ const appendLineItems = (currentItems: LineItemForm[], nextItems: LineItemForm[]
 
 const AdminContracts = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [budgetItems, setBudgetItems] = useState<BudgetItem[]>([]);
@@ -1079,6 +1127,20 @@ const AdminContracts = () => {
   const [settlementLineItems, setSettlementLineItems] = useState<LineItemForm[]>([]);
   const [settlementLoading, setSettlementLoading] = useState(false);
   const [settlementCreating, setSettlementCreating] = useState(false);
+  const [settlementFeedbackReview, setSettlementFeedbackReview] =
+    useState<SettlementFeedbackReview | null>(null);
+  const [settlementFeedbackLoading, setSettlementFeedbackLoading] = useState(false);
+  const [settlementRevising, setSettlementRevising] = useState(false);
+  const settlementFeedbackByLineItemId = useMemo(
+    () =>
+      Object.fromEntries(
+        (settlementFeedbackReview?.settlementVersion.lineItems ?? []).map((item) => [
+          item.id,
+          item.feedback ?? null,
+        ]),
+      ),
+    [settlementFeedbackReview],
+  );
 
   const quoteTotal = useMemo(
     () => form.lineItems.reduce((sum, item) => sum + lineAmount(item), 0),
@@ -1587,6 +1649,56 @@ const AdminContracts = () => {
     }
   };
 
+  const openSettlementFeedback = async (contract: Contract) => {
+    setSettlementFeedbackLoading(true);
+    setSelectedServiceId(AUTO_SERVICE_VALUE);
+    void loadServices();
+    try {
+      const review = await apiClient.get<SettlementFeedbackReview>(
+        `/admin/contracts/${contract.id}/settlement-feedback`,
+      );
+      setSettlementFeedbackReview(review);
+      setSettlementLineItems(
+        review.settlementVersion.lineItems.map((item) => ({
+          sourceLineItemId: item.id,
+          category: item.category ?? "",
+          description: String(item.description ?? ""),
+          unit: String(item.unit ?? "gói"),
+          quantity: String(item.quantity ?? 1),
+          unitPrice: String(item.unitPrice ?? 0),
+          note: String(item.note ?? ""),
+        })),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không tải được feedback nghiệm thu");
+    } finally {
+      setSettlementFeedbackLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const contractId = searchParams.get("settlementFeedback");
+    if (!contractId || loading || settlementFeedbackReview || settlementFeedbackLoading) return;
+
+    const contract = contracts.find((item) => item.id === contractId);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("settlementFeedback");
+    setSearchParams(nextParams, { replace: true });
+
+    if (!contract) {
+      toast.error("Không tìm thấy hợp đồng có feedback nghiệm thu");
+      return;
+    }
+    void openSettlementFeedback(contract);
+  }, [
+    contracts,
+    loading,
+    searchParams,
+    setSearchParams,
+    settlementFeedbackLoading,
+    settlementFeedbackReview,
+  ]);
+
   const settlementTotal = useMemo(
     () => settlementLineItems.reduce((sum, item) => sum + toNumber(item.quantity) * toNumber(item.unitPrice), 0),
     [settlementLineItems],
@@ -1699,6 +1811,43 @@ const AdminContracts = () => {
     }
   };
 
+  const handleReviseSettlement = async () => {
+    if (!settlementFeedbackReview) return;
+    const validItems = settlementLineItems.filter(
+      (item) => item.category.trim() && toNumber(item.unitPrice) >= 0 && toNumber(item.quantity) > 0,
+    );
+    if (validItems.length === 0) {
+      toast.error("Cần ít nhất 1 hạng mục hợp lệ");
+      return;
+    }
+
+    setSettlementRevising(true);
+    try {
+      await apiClient.patch(
+        `/admin/contracts/${settlementFeedbackReview.contract.id}/settlement`,
+        {
+          lineItems: validItems.map((item) => ({
+            sourceLineItemId: item.sourceLineItemId,
+            category: item.category.trim(),
+            description: item.description.trim() || null,
+            unit: item.unit.trim() || null,
+            quantity: toNumber(item.quantity),
+            unitPrice: toNumber(item.unitPrice),
+            note: item.note.trim() || null,
+          })),
+        },
+      );
+      toast.success("Đã chỉnh sửa và gửi lại biên bản nghiệm thu cho khách hàng");
+      setSettlementFeedbackReview(null);
+      setSettlementLineItems([]);
+      await loadContracts();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Chỉnh sửa biên bản nghiệm thu thất bại");
+    } finally {
+      setSettlementRevising(false);
+    }
+  };
+
   const renderLineItemEditor = ({
     items,
     total,
@@ -1716,6 +1865,7 @@ const AdminContracts = () => {
     importBudgetDisabled,
     importBudgetLabel,
     helperText,
+    feedbackByLineItemId,
   }: LineItemEditorOptions) => (
     <div className="space-y-3">
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-low p-3 lg:flex-row lg:items-end">
@@ -1771,22 +1921,53 @@ const AdminContracts = () => {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="min-w-[1160px] w-full border-collapse text-sm">
+        <table
+          className={`${feedbackByLineItemId ? "min-w-[1050px]" : "min-w-[960px]"} w-full table-fixed border-collapse text-sm`}
+        >
+          <colgroup>
+            {feedbackByLineItemId ? (
+              <>
+                <col className="w-[19%]" />
+                <col className="w-[27%]" />
+                <col className="w-[6%]" />
+                <col className="w-[7%]" />
+                <col className="w-[11%]" />
+                <col className="w-[11%]" />
+                <col className="w-[16%]" />
+                <col className="w-[3%]" />
+              </>
+            ) : (
+              <>
+                <col className="w-[25%]" />
+                <col className="w-[35%]" />
+                <col className="w-[7%]" />
+                <col className="w-[8%]" />
+                <col className="w-[11%]" />
+                <col className="w-[11%]" />
+                <col className="w-[3%]" />
+              </>
+            )}
+          </colgroup>
           <thead className="bg-surface-low">
             <tr>
-              <th className="w-80 px-3 py-2 text-left font-body font-semibold">Hạng mục</th>
-              <th className="w-[420px] px-3 py-2 text-left font-body font-semibold">Mô tả</th>
-              <th className="w-24 px-3 py-2 text-left font-body font-semibold">SL</th>
-              <th className="w-24 px-3 py-2 text-left font-body font-semibold">Đơn vị</th>
-              <th className="w-36 px-3 py-2 text-left font-body font-semibold">{unitPriceLabel}</th>
-              <th className="w-36 px-3 py-2 text-right font-body font-semibold">Thành tiền</th>
-              <th className="w-12 px-2 py-2" />
+              <th className="px-2 py-2 text-left font-body font-semibold">Hạng mục</th>
+              <th className="px-2 py-2 text-left font-body font-semibold">Mô tả</th>
+              <th className="px-2 py-2 text-left font-body font-semibold">SL</th>
+              <th className="px-2 py-2 text-left font-body font-semibold">Đơn vị</th>
+              <th className="px-2 py-2 text-left font-body font-semibold">{unitPriceLabel}</th>
+              <th className="px-2 py-2 text-right font-body font-semibold">Thành tiền</th>
+              {feedbackByLineItemId && (
+                <th className="px-2 py-2 text-left font-body font-semibold">
+                  Feedback khách hàng
+                </th>
+              )}
+              <th className="px-1 py-2" />
             </tr>
           </thead>
           <tbody>
             {items.map((item, index) => (
               <tr key={index} className="border-t border-border">
-                <td className="px-3 py-2 align-top">
+                <td className="px-2 py-2 align-top">
                   <div className="space-y-2">
                     <Input
                       value={item.category}
@@ -1815,16 +1996,16 @@ const AdminContracts = () => {
                     </Select>
                   </div>
                 </td>
-                <td className="px-3 py-2 align-top">
+                <td className="px-2 py-2 align-top">
                   <Textarea
                     value={item.description}
                     onChange={(event) => onUpdate(index, { description: event.target.value })}
                     placeholder={descriptionPlaceholder}
                     rows={3}
-                    className="min-h-[78px] resize-y rounded-lg border-none bg-surface-lowest font-body leading-relaxed text-foreground"
+                    className="min-h-[70px] resize-y rounded-lg border-none bg-surface-lowest font-body text-sm leading-relaxed text-foreground"
                   />
                 </td>
-                <td className="px-3 py-2 align-top">
+                <td className="px-2 py-2 align-top">
                   <Input
                     type="number"
                     min={0}
@@ -1834,7 +2015,7 @@ const AdminContracts = () => {
                     className="h-9 rounded-lg border-none bg-surface-lowest font-body"
                   />
                 </td>
-                <td className="px-3 py-2 align-top">
+                <td className="px-2 py-2 align-top">
                   <Select value={item.unit || "gói"} onValueChange={(value) => onUpdate(index, { unit: value })}>
                     <SelectTrigger className="h-9 rounded-lg border-none bg-surface-lowest font-body">
                       <SelectValue />
@@ -1846,7 +2027,7 @@ const AdminContracts = () => {
                     </SelectContent>
                   </Select>
                 </td>
-                <td className="px-3 py-2 align-top">
+                <td className="px-2 py-2 align-top">
                   <Input
                     type="number"
                     min={0}
@@ -1855,10 +2036,46 @@ const AdminContracts = () => {
                     className="h-9 rounded-lg border-none bg-surface-lowest font-body"
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-body font-semibold">
+                <td className="px-2 py-2 text-right align-middle font-body text-xs font-semibold">
                   {money(lineAmount(item))}
                 </td>
-                <td className="px-2 py-2 align-top">
+                {feedbackByLineItemId && (
+                  <td className="px-2 py-2 align-top">
+                    {(() => {
+                      const feedback = item.sourceLineItemId
+                        ? feedbackByLineItemId[item.sourceLineItemId]
+                        : null;
+
+                      if (feedback?.status === "feedback") {
+                        return (
+                          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
+                            <p className="font-body text-xs font-semibold text-amber-700">
+                              Cần chỉnh sửa
+                            </p>
+                            <p className="mt-1 whitespace-pre-wrap break-words font-body text-xs leading-relaxed text-foreground">
+                              {feedback.feedbackNote || "Khách hàng yêu cầu xem lại hạng mục này."}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      if (feedback?.status === "agreed") {
+                        return (
+                          <div className="rounded-lg border border-secondary/30 bg-secondary/10 p-2 font-body text-xs font-medium text-secondary">
+                            Khách hàng đã đồng ý
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <p className="px-1 py-2 font-body text-xs italic text-muted-foreground">
+                          {item.sourceLineItemId ? "Khách hàng chưa phản hồi" : "Hạng mục mới"}
+                        </p>
+                      );
+                    })()}
+                  </td>
+                )}
+                <td className="px-1 py-2 align-top">
                   <Button
                     type="button"
                     variant="ghost"
@@ -2130,6 +2347,17 @@ const AdminContracts = () => {
                         {contract.status === "cancelled" ? "Có phản hồi KH" : "KH từ chối"}
                       </span>
                     )}
+                    {hasSettlementFeedback(contract) && (
+                      <button
+                        type="button"
+                        onClick={() => void openSettlementFeedback(contract)}
+                        disabled={settlementFeedbackLoading}
+                        className="rounded-full bg-amber-500/10 px-2 py-0.5 font-body text-[10px] font-semibold text-amber-600"
+                        title="Khách hàng có hạng mục nghiệm thu cần chỉnh sửa"
+                      >
+                        Feedback nghiệm thu
+                      </button>
+                    )}
                     {contract.status === "active" && contract.respondedAt && (
                       <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[10px] font-semibold text-secondary">
                         KH đồng ý
@@ -2215,15 +2443,23 @@ const AdminContracts = () => {
                             </DropdownMenuItem>
                           </>
                         )}
-                        {(contract.status === "active" || contract.status === "sent") && (
+                        {(contract.status === "active" || contract.status === "sent") &&
+                          !hasSettlementVersion(contract) && (
                           <DropdownMenuItem onClick={() => openSettlementPreview(contract)}>
                             <ClipboardCheck size={12} className="mr-2" /> Tạo biên bản quyết toán
                           </DropdownMenuItem>
                         )}
-                        {contract.status === "liquidated" && (
-                          <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}?view=settlement`)}>
-                            <ClipboardCheck size={12} className="mr-2" /> Xem biên bản quyết toán
-                          </DropdownMenuItem>
+                        {hasSettlementVersion(contract) && (
+                          <>
+                            {hasSettlementFeedback(contract) && (
+                              <DropdownMenuItem onClick={() => void openSettlementFeedback(contract)}>
+                                <Edit2 size={12} className="mr-2" /> Xem feedback & chỉnh sửa
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}?view=settlement`)}>
+                              <ClipboardCheck size={12} className="mr-2" /> Xem biên bản quyết toán
+                            </DropdownMenuItem>
+                          </>
                         )}
                         {(contract.status === "draft" || contract.status === "sent") && (
                           <>
@@ -2432,6 +2668,109 @@ const AdminContracts = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Settlement customer feedback and revision dialog */}
+      <Dialog
+        open={!!settlementFeedbackReview}
+        onOpenChange={() => {
+          setSettlementFeedbackReview(null);
+          setSettlementLineItems([]);
+        }}
+      >
+        <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Feedback nghiệm thu từ khách hàng</DialogTitle>
+          </DialogHeader>
+          {settlementFeedbackReview && (
+            <div className="space-y-5">
+              <div className="grid gap-3 rounded-lg bg-surface-low p-4 font-body text-sm md:grid-cols-2">
+                <p className="text-muted-foreground">
+                  Hợp đồng:{" "}
+                  <span className="font-semibold text-foreground">
+                    {settlementFeedbackReview.contract.contractCode}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Khách hàng:{" "}
+                  <span className="font-semibold text-foreground">
+                    {settlementFeedbackReview.contract.customerUser.displayName}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Sự kiện:{" "}
+                  <span className="font-semibold text-foreground">
+                    {settlementFeedbackReview.contract.event.name}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Phiên bản phản hồi:{" "}
+                  <span className="font-semibold text-foreground">
+                    {settlementFeedbackReview.settlementVersion.versionLabel}
+                  </span>
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-4">
+                {[
+                  ["Tổng hạng mục", settlementFeedbackReview.summary.total, "text-foreground"],
+                  ["Đồng ý", settlementFeedbackReview.summary.agreed, "text-secondary"],
+                  ["Cần chỉnh sửa", settlementFeedbackReview.summary.feedback, "text-amber-600"],
+                  ["Chưa phản hồi", settlementFeedbackReview.summary.pending, "text-muted-foreground"],
+                ].map(([label, value, color]) => (
+                  <div key={String(label)} className="rounded-lg border border-border p-3 font-body">
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className={`mt-1 text-xl font-semibold ${color}`}>{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <p className="font-body text-sm font-semibold text-foreground">
+                  Chỉnh sửa biên bản nghiệm thu
+                </p>
+                {renderLineItemEditor({
+                  items: settlementLineItems,
+                  total: settlementTotal,
+                  totalLabel: "Tổng giá trị sau chỉnh sửa",
+                  unitPriceLabel: "Đơn giá điều chỉnh",
+                  descriptionPlaceholder: "Mô tả hạng mục sau chỉnh sửa",
+                  onUpdate: updateSettlementItem,
+                  onCategoryChange: updateSettlementItemCategory,
+                  onApplyTemplate: applySettlementLineItemTemplate,
+                  onAdd: addSettlementLineItem,
+                  onRemove: removeSettlementLineItem,
+                  onApplySuggested: applySuggestedSettlementLineItems,
+                  onImportBudget: importBudgetAsSettlement,
+                  applySuggestedDisabled: !selectedService && !selectedServiceCategory && lineItemTemplateOptions.length === 0,
+                  importBudgetDisabled: true,
+                  importBudgetLabel: "Nhập từ ngân sách",
+                  helperText: "Nội dung cũ được giữ trong lịch sử; khi lưu hệ thống sẽ tạo một phiên bản nghiệm thu mới.",
+                  feedbackByLineItemId: settlementFeedbackByLineItemId,
+                })}
+              </div>
+            </div>
+          )}
+          <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background/95 px-6 py-4 backdrop-blur">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSettlementFeedbackReview(null);
+                setSettlementLineItems([]);
+              }}
+            >
+              Hủy
+            </Button>
+            <Button
+              variant="hero"
+              onClick={handleReviseSettlement}
+              disabled={settlementRevising || !settlementFeedbackReview?.summary.needsRevision}
+            >
+              <Send size={14} className="mr-1" />
+              {settlementRevising ? "Đang gửi..." : "Lưu & gửi lại khách hàng"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Settlement editable dialog */}
       <Dialog open={!!settlementPreview} onOpenChange={() => { setSettlementPreview(null); setSettlementLineItems([]); }}>
         <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
@@ -2494,7 +2833,7 @@ const AdminContracts = () => {
               </div>
 
               <div className="rounded-lg bg-surface-low p-3 font-body text-xs text-muted-foreground">
-                Khi xác nhận, hệ thống sẽ tạo phiên bản quyết toán (QT-1.0), cập nhật giá trị hợp đồng, và chuyển trạng thái sang "Đã thanh lý".
+                Khi xác nhận, hệ thống sẽ tạo phiên bản quyết toán (QT-1.0) và cập nhật giá trị hợp đồng. Khi khách hàng đồng ý toàn bộ hạng mục, tiến độ chuyển đến bước cuối ở mức 99%; dự án chỉ hoàn thành 100% và hợp đồng chuyển sang "Đã thanh lý" sau khi thanh toán đủ.
               </div>
             </div>
           )}

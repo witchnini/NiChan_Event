@@ -37,6 +37,7 @@ const milestones = [
   { title: "Đặt venue & Nhà cung cấp", description: "Liên hệ và xác nhận các nhà cung cấp" },
   { title: "Tổng duyệt", description: "Tổng duyệt toàn bộ chương trình" },
   { title: "Ngày sự kiện", description: "Ngày diễn ra sự kiện chính thức" },
+  { title: "Hoàn thành", description: "Hoàn tất quyết toán, thanh toán và thanh lý hợp đồng" },
 ];
 
 const requestProgress: Record<string, { percent: number; step: number }> = {
@@ -46,7 +47,7 @@ const requestProgress: Record<string, { percent: number; step: number }> = {
   confirmed: { percent: 25, step: 2 },
   planning: { percent: 40, step: 3 },
   in_progress: { percent: 60, step: 5 },
-  completed: { percent: 100, step: 7 },
+  completed: { percent: 100, step: 8 },
   cancelled: { percent: 0, step: -1 },
   rejected: { percent: 0, step: -1 },
 };

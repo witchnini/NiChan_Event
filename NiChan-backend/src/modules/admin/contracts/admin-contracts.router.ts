@@ -4,15 +4,22 @@ import { validate } from "../../../middleware/validate";
 import { buildMeta, parsePagination } from "../../../utils/pagination";
 import { p, q } from "../../../utils/request";
 import { sendSuccess } from "../../../utils/response";
-import { createContractSchema, createSettlementSchema, updateContractSchema } from "./admin-contracts.schema";
+import {
+  createContractSchema,
+  createSettlementSchema,
+  reviseSettlementSchema,
+  updateContractSchema,
+} from "./admin-contracts.schema";
 import {
   cancelContract,
   createContract,
   createSettlementVersion,
   deleteContract,
   getContractById,
+  getSettlementFeedbackForAdmin,
   getSettlementPreview,
   listContracts,
+  reviseSettlementVersion,
   sendContract,
   updateContract,
 } from "./admin-contracts.service";
@@ -71,6 +78,12 @@ adminContractsRouter.get("/:id/settlement-preview", async (req: Request, res: Re
   sendSuccess(res, { data });
 });
 
+// GET /api/admin/contracts/:id/settlement-feedback
+adminContractsRouter.get("/:id/settlement-feedback", async (req: Request, res: Response) => {
+  const data = await getSettlementFeedbackForAdmin(p(req, "id"));
+  sendSuccess(res, { data });
+});
+
 // POST /api/admin/contracts/:id/settlement
 adminContractsRouter.post(
   "/:id/settlement",
@@ -81,6 +94,16 @@ adminContractsRouter.post(
       req.user!.userId,
       req.body,
     );
+    sendSuccess(res, { data });
+  },
+);
+
+// PATCH /api/admin/contracts/:id/settlement
+adminContractsRouter.patch(
+  "/:id/settlement",
+  validate(reviseSettlementSchema),
+  async (req: Request, res: Response) => {
+    const data = await reviseSettlementVersion(p(req, "id"), req.user!.userId, req.body);
     sendSuccess(res, { data });
   },
 );

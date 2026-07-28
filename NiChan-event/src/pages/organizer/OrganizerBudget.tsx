@@ -94,12 +94,10 @@ const emptyForm = {
   status: "planned",
   vendorId: NO_VENDOR,
 };
-const toMillion = (value: string | number) => Number(value || 0) / 1_000_000;
-const fromMillion = (value: string) => Number(value.replace(",", ".") || 0) * 1_000_000;
-const formatMillion = (value: string | number) =>
-  toMillion(value).toLocaleString("vi-VN", { maximumFractionDigits: 2 });
-const formatMillionValue = (value: number) =>
-  value.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
+const toAmount = (value: string | number) => Number(value || 0);
+const parseAmount = (value: string) => Number(value || 0);
+const formatCurrency = (value: string | number) =>
+  `${toAmount(value).toLocaleString("vi-VN")} đ`;
 const normalizeCategoryName = (value: string) => value.trim().toLowerCase();
 
 const OrganizerBudget = () => {
@@ -170,8 +168,8 @@ const OrganizerBudget = () => {
 
   const comparisonData = useMemo(() => visibleItems.map(item => ({
     category: item.category,
-    estimated: toMillion(item.estimatedAmount),
-    actual: toMillion(item.actualAmount),
+    estimated: toAmount(item.estimatedAmount),
+    actual: toAmount(item.actualAmount),
   })), [visibleItems]);
 
   const categoryOptions = useMemo(() => {
@@ -199,8 +197,8 @@ const OrganizerBudget = () => {
     setForm({
       category: isPresetCategory ? item.category : CUSTOM_CATEGORY,
       customCategory: isPresetCategory ? "" : item.category,
-      estimated: String(toMillion(item.estimatedAmount)),
-      actual: String(toMillion(item.actualAmount)),
+      estimated: String(toAmount(item.estimatedAmount)),
+      actual: String(toAmount(item.actualAmount)),
       note: item.note ?? "",
       status: item.status ?? "planned",
       vendorId: item.vendorId ?? NO_VENDOR,
@@ -219,8 +217,8 @@ const OrganizerBudget = () => {
     const payload = {
       projectBudgetId: current.budget.id,
       category,
-      estimatedAmount: fromMillion(form.estimated),
-      actualAmount: fromMillion(form.actual),
+      estimatedAmount: parseAmount(form.estimated),
+      actualAmount: parseAmount(form.actual),
       status: form.status,
       note: form.note || undefined,
       vendorId: form.vendorId === NO_VENDOR ? null : form.vendorId,
@@ -261,9 +259,9 @@ const OrganizerBudget = () => {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
-          { label: "Tổng dự toán", value: `${formatMillion(totalEstimated)}tr`, icon: Wallet, color: "text-primary" },
-          { label: "Đã chi thực tế", value: `${formatMillion(totalActual)}tr`, icon: TrendingDown, color: totalActual > totalEstimated * 0.8 ? "text-destructive" : "text-secondary" },
-          { label: "Còn lại", value: `${formatMillion(remaining)}tr`, icon: remaining < 0 ? TrendingDown : TrendingUp, color: remaining < 0 ? "text-destructive" : "text-secondary" },
+          { label: "Tổng dự toán", value: formatCurrency(totalEstimated), icon: Wallet, color: "text-primary" },
+          { label: "Đã chi thực tế", value: formatCurrency(totalActual), icon: TrendingDown, color: totalActual > totalEstimated * 0.8 ? "text-destructive" : "text-secondary" },
+          { label: "Còn lại", value: formatCurrency(remaining), icon: remaining < 0 ? TrendingDown : TrendingUp, color: remaining < 0 ? "text-destructive" : "text-secondary" },
         ].map((stat, i) => (
           <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }} className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
             <stat.icon size={20} className={stat.color} />
@@ -325,8 +323,8 @@ const OrganizerBudget = () => {
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-3 text-muted-foreground font-semibold">Hạng mục</th>
-                    <th className="text-right py-3 text-muted-foreground font-semibold">Dự toán (tr)</th>
-                    <th className="text-right py-3 text-muted-foreground font-semibold">Thực tế (tr)</th>
+                    <th className="text-right py-3 text-muted-foreground font-semibold">Dự toán (VND)</th>
+                    <th className="text-right py-3 text-muted-foreground font-semibold">Thực tế (VND)</th>
                     <th className="text-right py-3 text-muted-foreground font-semibold">Chênh lệch</th>
                     <th className="text-left py-3 text-muted-foreground font-semibold pl-4">Trạng thái</th>
                     <th className="text-left py-3 text-muted-foreground font-semibold pl-4">Nhà cung cấp</th>
@@ -338,15 +336,15 @@ const OrganizerBudget = () => {
                   {visibleItems.length === 0 ? (
                     <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">Chưa có hạng mục nào.</td></tr>
                   ) : visibleItems.map(item => {
-                    const estimated = toMillion(item.estimatedAmount);
-                    const actual = toMillion(item.actualAmount);
+                    const estimated = toAmount(item.estimatedAmount);
+                    const actual = toAmount(item.actualAmount);
                     const diff = estimated - actual;
                     return (
                       <tr key={item.id} className="border-b border-border last:border-0 hover:bg-surface-low/50">
                         <td className="py-3 font-semibold text-foreground">{item.category}</td>
-                        <td className="py-3 text-right text-foreground">{formatMillionValue(estimated)}</td>
-                        <td className="py-3 text-right text-foreground">{formatMillionValue(actual)}{actual > estimated && <AlertCircle size={12} className="inline ml-1 text-destructive" />}</td>
-                        <td className={`py-3 text-right font-semibold ${diff > 0 ? "text-secondary" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>{diff > 0 ? `+${formatMillionValue(diff)}` : diff === 0 ? "-" : formatMillionValue(diff)}</td>
+                        <td className="py-3 text-right text-foreground">{formatCurrency(estimated)}</td>
+                        <td className="py-3 text-right text-foreground">{formatCurrency(actual)}{actual > estimated && <AlertCircle size={12} className="inline ml-1 text-destructive" />}</td>
+                        <td className={`py-3 text-right font-semibold ${diff > 0 ? "text-secondary" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>{diff > 0 ? `+${formatCurrency(diff)}` : diff === 0 ? "-" : formatCurrency(diff)}</td>
                         <td className="py-3 pl-4">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-body font-semibold ${statusBadge[item.status] ?? "bg-muted text-muted-foreground"}`}>
                             {statusLabel[item.status] ?? item.status}
@@ -371,13 +369,13 @@ const OrganizerBudget = () => {
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">
-        <h3 className="font-serif text-headline-md text-foreground mb-6">Dự toán vs Thực tế (triệu VND)</h3>
+        <h3 className="font-serif text-headline-md text-foreground mb-6">Dự toán vs Thực tế (VND)</h3>
         <ResponsiveContainer width="100%" height={250}>
           <BarChart data={comparisonData}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(38 20% 86%)" />
             <XAxis dataKey="category" tick={{ fontSize: 11, fill: "hsl(50 8% 42%)" }} />
-            <YAxis tick={{ fontSize: 12, fill: "hsl(50 8% 42%)" }} />
-            <Tooltip />
+            <YAxis tick={{ fontSize: 12, fill: "hsl(50 8% 42%)" }} tickFormatter={(value) => Number(value).toLocaleString("vi-VN")} />
+            <Tooltip formatter={(value) => formatCurrency(Number(value))} />
             <Bar dataKey="estimated" fill="hsl(38 20% 86%)" radius={[6, 6, 0, 0]} name="Dự toán" />
             <Bar dataKey="actual" fill="hsl(355 63% 42%)" radius={[6, 6, 0, 0]} name="Thực tế" />
           </BarChart>
@@ -401,8 +399,8 @@ const OrganizerBudget = () => {
               <div><label className="font-body text-sm mb-1 block">Tên hạng mục mới</label><Input value={form.customCategory} onChange={e => setForm({ ...form, customCategory: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
             )}
             <div className="grid grid-cols-2 gap-4">
-              <div><label className="font-body text-sm mb-1 block">Dự toán (triệu)</label><Input type="number" min="0" step="any" inputMode="decimal" placeholder="VD: 1.7" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
-              <div><label className="font-body text-sm mb-1 block">Thực tế (triệu)</label><Input type="number" min="0" step="any" inputMode="decimal" placeholder="VD: 1.7" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+              <div><label className="font-body text-sm mb-1 block">Dự toán (VND)</label><Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+              <div><label className="font-body text-sm mb-1 block">Thực tế (VND)</label><Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><label className="font-body text-sm mb-1 block">Trạng thái</label>

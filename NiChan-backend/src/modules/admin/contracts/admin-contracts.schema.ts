@@ -43,6 +43,17 @@ export const createSettlementSchema = z.object({
   generalTerms: z.string().min(1).optional(),
 });
 
+const reviseSettlementLineItemSchema = contractLineItemSchema.extend({
+  sourceLineItemId: z.string().uuid().optional(),
+});
+
+export const reviseSettlementSchema = z.object({
+  lineItems: z.array(reviseSettlementLineItemSchema).min(1),
+  scopeText: z.string().min(1).optional(),
+  generalTerms: z.string().min(1).optional(),
+});
+
 export type CreateContractInput = z.infer<typeof createContractSchema>;
 export type UpdateContractInput = z.infer<typeof updateContractSchema>;
 export type CreateSettlementInput = z.infer<typeof createSettlementSchema>;
+export type ReviseSettlementInput = z.infer<typeof reviseSettlementSchema>;

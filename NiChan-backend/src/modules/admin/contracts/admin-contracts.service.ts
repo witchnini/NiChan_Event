@@ -1,7 +1,16 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
-import type { CreateContractInput, CreateSettlementInput, UpdateContractInput } from "./admin-contracts.schema";
+import {
+  emitCustomerNotification,
+  notifyCustomerForEvent,
+} from "../../shared/event-lifecycle.service";
+import type {
+  CreateContractInput,
+  CreateSettlementInput,
+  ReviseSettlementInput,
+  UpdateContractInput,
+} from "./admin-contracts.schema";
 
 type ContractLineItemInput = NonNullable<CreateContractInput["lineItems"]>[number];
 type StoredContractLineItem = {
@@ -198,6 +207,10 @@ export const listContracts = async (filters: {
           orderBy: { createdAt: "desc" },
           include: { lineItems: lineItemsInclude },
         },
+        settlementFeedbacks: {
+          where: { status: "feedback" },
+          select: { id: true },
+        },
       },
     }),
     prisma.contract.count({ where }),
@@ -353,6 +366,7 @@ export const sendContract = async (id: string, sentById: string) => {
           name: true,
           eventDate: true,
           consultationRequestId: true,
+          customerUserId: true,
         },
       },
       versions: {
@@ -368,7 +382,7 @@ export const sendContract = async (id: string, sentById: string) => {
 
   const documentUrl = existing.versions[0]?.documentUrl ?? "";
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const sentAt = new Date();
     const contract = await tx.contract.update({
       where: { id },
@@ -427,8 +441,33 @@ export const sendContract = async (id: string, sentById: string) => {
       });
     }
 
-    return contract;
+    const notification = await tx.notification.create({
+      data: {
+        userId: existing.event.customerUserId,
+        scope: "customer",
+        type: "contract",
+        title: "Hợp đồng mới đã được gửi",
+        message: `Hợp đồng ${existing.contractCode} cho sự kiện ${existing.event.name} đã được gửi. Vui lòng kiểm tra nội dung hợp đồng.`,
+        entityType: "contract",
+        entityId: id,
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        title: true,
+        message: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
+      },
+    });
+
+    return { contract, notification };
   });
+
+  emitCustomerNotification(result.notification);
+  return result.contract;
 };
 
 // ─── Settlement (Quyết toán) ──────────────────────────────────────────────────
@@ -570,7 +609,7 @@ export const createSettlementVersion = async (
       "Bên B thanh toán phần còn lại (nếu có) trong vòng 07 ngày kể từ ngày ký biên bản này. " +
       "Sau khi thanh toán đủ, hợp đồng được coi là hoàn tất và thanh lý.";
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     // Create settlement version
     await tx.contractVersion.create({
       data: {
@@ -585,13 +624,14 @@ export const createSettlementVersion = async (
       },
     });
 
-    // Update contract total and status
+    // Giữ hợp đồng ở trạng thái active cho đến khi khách đồng ý nghiệm thu
+    // và khoản thanh toán cuối cùng được xác nhận.
     const updatedContract = await tx.contract.update({
       where: { id: contractId },
       data: {
         totalValue,
         currentVersion: versionLabel,
-        status: "liquidated",
+        status: "active",
       },
     });
 
@@ -606,24 +646,285 @@ export const createSettlementVersion = async (
     });
 
     // Notify customer
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId: contract.event.customerUserId,
         scope: "customer",
-        type: "contract",
+        type: "settlement",
         title: "Biên bản quyết toán đã được tạo",
-        message: `Biên bản quyết toán cho hợp đồng ${contract.contractCode} (sự kiện ${contract.event.name}) đã được lập. Vui lòng kiểm tra và thanh toán phần còn lại.`,
-        entityType: "contract",
-        entityId: contractId,
+        message: `Biên bản quyết toán cho hợp đồng ${contract.contractCode} (sự kiện ${contract.event.name}) đã được lập. Vui lòng nghiệm thu từng hạng mục; đợt thanh toán cuối sẽ mở sau khi hai bên chốt nội dung.`,
+        entityType: "event",
+        entityId: contract.eventId,
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        title: true,
+        message: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
       },
     });
 
-    return updatedContract;
+    return { updatedContract, notification };
   });
+
+  emitCustomerNotification(result.notification);
+  return result.updatedContract;
+};
+
+export const getSettlementFeedbackForAdmin = async (contractId: string) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    select: {
+      id: true,
+      contractCode: true,
+      status: true,
+      totalValue: true,
+      event: { select: { id: true, name: true } },
+      customerUser: {
+        select: { id: true, displayName: true, email: true, phone: true },
+      },
+      versions: {
+        where: { purpose: "settlement" },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          versionLabel: true,
+          scopeText: true,
+          paymentTerms: true,
+          generalTerms: true,
+          createdAt: true,
+          lineItems: {
+            ...lineItemsInclude,
+            include: {
+              settlementFeedbacks: {
+                where: { contractId },
+                select: {
+                  id: true,
+                  status: true,
+                  feedbackNote: true,
+                  createdAt: true,
+                  updatedAt: true,
+                  customer: { select: { id: true, displayName: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  const settlementVersion = contract.versions[0];
+  if (!settlementVersion) {
+    throw createError("NOT_FOUND", "Settlement version not found", 404);
+  }
+
+  const lineItems = settlementVersion.lineItems.map((item) => {
+    const feedback = item.settlementFeedbacks[0] ?? null;
+    const { settlementFeedbacks: _feedbacks, ...lineItem } = item;
+    return { ...lineItem, feedback };
+  });
+  const agreedCount = lineItems.filter((item) => item.feedback?.status === "agreed").length;
+  const feedbackCount = lineItems.filter((item) => item.feedback?.status === "feedback").length;
+  const pendingCount = lineItems.length - agreedCount - feedbackCount;
+  const submittedAt = lineItems.reduce<Date | null>((latest, item) => {
+    const updatedAt = item.feedback?.updatedAt ?? null;
+    return updatedAt && (!latest || updatedAt > latest) ? updatedAt : latest;
+  }, null);
+
+  return {
+    contract: {
+      id: contract.id,
+      contractCode: contract.contractCode,
+      status: contract.status,
+      totalValue: contract.totalValue,
+      event: contract.event,
+      customerUser: contract.customerUser,
+    },
+    settlementVersion: {
+      ...settlementVersion,
+      lineItems,
+    },
+    summary: {
+      total: lineItems.length,
+      agreed: agreedCount,
+      feedback: feedbackCount,
+      pending: pendingCount,
+      submittedAt,
+      needsRevision: feedbackCount > 0,
+    },
+  };
+};
+
+const nextSettlementVersionLabel = (label: string) => {
+  const match = label.match(/^QT-(\d+)\.(\d+)$/i);
+  if (!match) return "QT-1.1";
+  return `QT-${Number(match[1])}.${Number(match[2]) + 1}`;
+};
+
+export const reviseSettlementVersion = async (
+  contractId: string,
+  revisedById: string,
+  input: ReviseSettlementInput,
+) => {
+  const contract = await prisma.contract.findUnique({
+    where: { id: contractId },
+    select: {
+      id: true,
+      contractCode: true,
+      status: true,
+      eventId: true,
+      event: { select: { name: true, customerUserId: true } },
+      versions: {
+        where: { purpose: "settlement" },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: {
+          lineItems: {
+            ...lineItemsInclude,
+            include: {
+              settlementFeedbacks: {
+                where: { status: { in: ["agreed", "feedback"] } },
+                select: { id: true, status: true, customerId: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!contract) throw createError("NOT_FOUND", "Contract not found", 404);
+  if (!["active", "liquidated"].includes(contract.status)) {
+    throw createError("CONFLICT", "Contract is not ready to revise settlement", 409);
+  }
+
+  const latestSettlement = contract.versions[0];
+  if (!latestSettlement) {
+    throw createError("NOT_FOUND", "Settlement version not found", 404);
+  }
+  if (
+    !latestSettlement.lineItems.some((item) =>
+      item.settlementFeedbacks.some((feedback) => feedback.status === "feedback"),
+    )
+  ) {
+    throw createError("CONFLICT", "Settlement has no customer feedback to revise", 409);
+  }
+
+  const lineItems = normalizeLineItems(input.lineItems);
+  const totalValue = sumLineItems(lineItems);
+  ensurePositiveContractTotal(totalValue);
+  const versionLabel = nextSettlementVersionLabel(latestSettlement.versionLabel);
+
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.settlementFeedback.updateMany({
+      where: { contractId, status: "feedback" },
+      data: { status: "resolved" },
+    });
+
+    const version = await tx.contractVersion.create({
+      data: {
+        contractId,
+        versionLabel,
+        purpose: "settlement",
+        scopeText: input.scopeText ?? latestSettlement.scopeText,
+        paymentTerms: latestSettlement.paymentTerms,
+        generalTerms: input.generalTerms ?? latestSettlement.generalTerms,
+        createdById: revisedById,
+        lineItems: { create: lineItems },
+      },
+      include: { lineItems: lineItemsInclude },
+    });
+
+    const previousLineItems = new Map(
+      latestSettlement.lineItems.map((item) => [item.id, item]),
+    );
+    const createdLineItems = new Map(
+      version.lineItems.map((item) => [item.sortOrder, item]),
+    );
+    const carriedAgreements = input.lineItems.flatMap((item, index) => {
+      if (!item.sourceLineItemId) return [];
+
+      const previousItem = previousLineItems.get(item.sourceLineItemId);
+      const createdItem = createdLineItems.get(index);
+      const agreedFeedback = previousItem?.settlementFeedbacks.find(
+        (feedback) => feedback.status === "agreed",
+      );
+      if (!createdItem || !agreedFeedback) return [];
+
+      return [{
+        contractLineItemId: createdItem.id,
+        contractId,
+        customerId: agreedFeedback.customerId,
+        status: "agreed",
+        feedbackNote: null,
+      }];
+    });
+
+    if (carriedAgreements.length > 0) {
+      await tx.settlementFeedback.createMany({ data: carriedAgreements });
+    }
+
+    await tx.contract.update({
+      where: { id: contractId },
+      data: { totalValue, currentVersion: versionLabel, status: "active" },
+    });
+
+    await tx.eventActivity.create({
+      data: {
+        eventId: contract.eventId,
+        actorUserId: revisedById,
+        iconName: "clipboard-edit",
+        message: `Đã chỉnh sửa biên bản nghiệm thu ${contract.contractCode} theo phản hồi khách hàng và tạo phiên bản ${versionLabel}.`,
+      },
+    });
+
+    const notification = await tx.notification.create({
+      data: {
+        userId: contract.event.customerUserId,
+        scope: "customer",
+        type: "settlement_feedback",
+        title: "Biên bản nghiệm thu đã được chỉnh sửa",
+        message: `Biên bản nghiệm thu của hợp đồng ${contract.contractCode} (${contract.event.name}) đã được chỉnh sửa theo phản hồi của bạn. Vui lòng kiểm tra lại phiên bản ${versionLabel}.`,
+        entityType: "event",
+        entityId: contract.eventId,
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        title: true,
+        message: true,
+        entityType: true,
+        entityId: true,
+        createdAt: true,
+      },
+    });
+
+    return { version, notification };
+  });
+
+  emitCustomerNotification(result.notification);
+  return result.version;
 };
 
 export const deleteContract = async (id: string) => {
-  const existing = await prisma.contract.findUnique({ where: { id } });
+  const existing = await prisma.contract.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      eventId: true,
+      contractCode: true,
+      status: true,
+      event: { select: { name: true } },
+    },
+  });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
 
   await prisma.$transaction(async (tx) => {
@@ -634,6 +935,14 @@ export const deleteContract = async (id: string) => {
     await tx.notification.deleteMany({ where: { entityType: "contract", entityId: id } });
     await tx.contract.delete({ where: { id } });
   });
+
+  if (existing.status !== "draft") {
+    await notifyCustomerForEvent(existing.eventId, {
+      type: "contract",
+      title: "Hợp đồng đã được gỡ",
+      message: `Hợp đồng ${existing.contractCode} của sự kiện ${existing.event.name} đã được gỡ khỏi hệ thống.`,
+    });
+  }
 };
 
 export const cancelContract = async (id: string, cancelledById: string) => {
@@ -655,7 +964,7 @@ export const cancelContract = async (id: string, cancelledById: string) => {
   if (existing.status === "liquidated")
     throw createError("CONFLICT", "Cannot cancel a liquidated contract", 409);
 
-  return prisma.$transaction(async (tx) => {
+  const contract = await prisma.$transaction(async (tx) => {
     const contract = await tx.contract.update({
       where: { id },
       data: { status: "cancelled" },
@@ -697,4 +1006,13 @@ export const cancelContract = async (id: string, cancelledById: string) => {
 
     return contract;
   });
+
+  await notifyCustomerForEvent(existing.eventId, {
+    type: "contract",
+    title: "Hợp đồng đã bị hủy",
+    message: `Hợp đồng ${existing.contractCode} của sự kiện ${existing.event.name} đã bị hủy.`,
+    entityType: "contract",
+    entityId: id,
+  });
+  return contract;
 };

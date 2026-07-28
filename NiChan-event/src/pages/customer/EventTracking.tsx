@@ -128,6 +128,12 @@ const getNextScheduledTransaction = (items: Transaction[], contractId: string) =
         Number(a.amount || 0) - Number(b.amount || 0),
     )[0];
 
+const isFinalSettlementTransaction = (transaction?: Pick<Transaction, "description"> | null) =>
+  Boolean(
+    transaction &&
+      /thanh toán sau nghiệm thu|phần còn lại sau quyết toán/i.test(transaction.description),
+  );
+
 const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-1", title: "Xác nhận yêu cầu", description: "Yêu cầu đã được tiếp nhận và xác nhận", status: "pending" },
   { id: "default-2", title: "Báo giá & Thống nhất", description: "Báo giá đã được gửi và xác nhận bởi khách hàng", status: "pending" },
@@ -136,6 +142,7 @@ const DEFAULT_MILESTONES: Milestone[] = [
   { id: "default-5", title: "Đặt venue & Nhà cung cấp", description: "Liên hệ và xác nhận venue, catering, décor", status: "pending" },
   { id: "default-6", title: "Tổng duyệt", description: "Tổng duyệt toàn bộ chương trình", status: "pending" },
   { id: "default-7", title: "Ngày sự kiện", description: "Ngày diễn ra sự kiện chính thức", status: "pending" },
+  { id: "default-8", title: "Hoàn thành", description: "Hoàn tất quyết toán, thanh toán và thanh lý hợp đồng", status: "pending" },
 ];
 
 const BILLABLE_CONTRACT_STATUSES = new Set(["sent", "active", "liquidated"]);
@@ -180,6 +187,9 @@ const EventTracking = () => {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackLoaded, setFeedbackLoaded] = useState(false);
   const [expandedFeedback, setExpandedFeedback] = useState<string | null>(null);
+  const [confirmedSettlementItemIds, setConfirmedSettlementItemIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -220,6 +230,23 @@ const EventTracking = () => {
       setActiveTab(tab);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (
+      activeTab !== "timeline" ||
+      window.location.hash !== "#timeline-planning-detail"
+    ) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("timeline-planning-detail")?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, loading, detailedTasks.length]);
 
   // Thêm tin nhắn vào danh sách, tránh trùng theo id (socket có thể gửi lại tin của chính mình)
   const appendMessage = (message: Message) => {
@@ -315,14 +342,34 @@ const EventTracking = () => {
     [contractSummaries],
   );
 
-  const hasLiquidatedContract = contractSummaries.some((c) => c.status === "liquidated");
-
-  // Load existing settlement feedbacks when switching to settlement tab
   useEffect(() => {
-    if (activeTab !== "settlement" || feedbackLoaded || contractSummaries.length === 0) return;
+    if (
+      activeTab !== "settlement" ||
+      window.location.hash !== "#settlement-service-items"
+    ) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById("settlement-service-items")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, loading, settlementLineItems.length]);
+
+  const hasSettlementContract = contractSummaries.some((contract) =>
+    contract.versions?.some((version) => version.purpose === "settlement"),
+  );
+
+  // Luôn tải trạng thái nghiệm thu để khóa thanh toán đợt cuối cho tới khi hai bên chốt.
+  useEffect(() => {
+    if (feedbackLoaded || contractSummaries.length === 0) return;
     const loadFeedbacks = async () => {
       try {
         const allFeedbacks: Record<string, SettlementItemFeedback> = {};
+        const confirmedItemIds = new Set<string>();
         for (const contract of contractSummaries) {
           const saved = await apiClient.get<SavedFeedback[]>(
             `/customer/contracts/${contract.id}/settlement-feedback`,
@@ -333,16 +380,18 @@ const EventTracking = () => {
               status: fb.status as SettlementItemFeedback["status"],
               note: fb.feedbackNote || "",
             };
+            if (fb.status === "agreed") confirmedItemIds.add(fb.contractLineItemId);
           }
         }
         setSettlementFeedbacks(allFeedbacks);
+        setConfirmedSettlementItemIds(confirmedItemIds);
         setFeedbackLoaded(true);
       } catch {
         // Silently fail — feedbacks are optional
       }
     };
     void loadFeedbacks();
-  }, [activeTab, feedbackLoaded, contractSummaries]);
+  }, [feedbackLoaded, contractSummaries]);
 
   const setItemFeedback = (lineItemId: string, status: SettlementItemFeedback["status"], note?: string) => {
     setSettlementFeedbacks((prev) => ({
@@ -395,7 +444,7 @@ const EventTracking = () => {
       toast.success(
         feedbackCount > 0
           ? `Đã gửi nghiệm thu: ${items.length - feedbackCount} đồng ý, ${feedbackCount} cần xem lại.`
-          : "Đã đồng ý tất cả hạng mục. Cảm ơn bạn!",
+          : "Đã chốt nghiệm thu. Bạn có thể thanh toán đợt cuối cùng.",
       );
       setExpandedFeedback(null);
     } catch (error) {
@@ -412,6 +461,11 @@ const EventTracking = () => {
     const pending = total - agreed - feedback;
     return { total, agreed, feedback, pending };
   }, [settlementLineItems, settlementFeedbacks]);
+  const settlementReviewComplete =
+    feedbackLoaded &&
+    feedbackStats.total > 0 &&
+    feedbackStats.pending === 0 &&
+    feedbackStats.feedback === 0;
 
   const taskStats = useMemo(() => {
     const total = detailedTasks.length;
@@ -554,6 +608,10 @@ const EventTracking = () => {
 
   const handleSubmitPayment = async () => {
     if (!id) return;
+    if (isFinalSettlementTransaction(selectedTransaction) && !settlementReviewComplete) {
+      toast.error("Vui lòng chốt toàn bộ hạng mục nghiệm thu trước khi thanh toán đợt cuối.");
+      return;
+    }
     const amount = Number(paymentForm.amount);
     if (!amount || amount <= 0) {
       toast.error("Vui lòng nhập số tiền thanh toán hợp lệ");
@@ -692,7 +750,12 @@ const EventTracking = () => {
                   in_progress: 4,  // Đặt venue & Nhà cung cấp
                   completed: 7,    // All done
                 };
-                const currentStepIndex = EVENT_STATUS_TO_STEP[event?.status ?? ""] ?? -1;
+                const currentStepIndex =
+                  event?.status === "completed"
+                    ? DEFAULT_MILESTONES.length
+                    : settlementReviewComplete
+                      ? DEFAULT_MILESTONES.length - 1
+                      : EVENT_STATUS_TO_STEP[event?.status ?? ""] ?? -1;
 
                 return DEFAULT_MILESTONES.map((defaultStep, i) => {
                   const apiMilestone = milestones[i];
@@ -709,7 +772,14 @@ const EventTracking = () => {
                   }
 
                   return (
-                    <motion.div key={defaultStep.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} className="relative flex items-start gap-6 mb-8">
+                    <motion.div
+                      key={defaultStep.id}
+                      id={i === 3 ? "timeline-planning-detail" : undefined}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.1 }}
+                      className={`relative flex items-start gap-6 mb-8 ${i === 3 ? "scroll-mt-28" : ""}`}
+                    >
                       <div className={`relative z-10 w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${status === "done" || status === "completed" ? "bg-secondary text-secondary-foreground" : status === "current" || status === "in_progress" ? "gradient-primary text-primary-foreground animate-pulse" : "bg-surface-high text-muted-foreground"}`}>
                         {status === "done" || status === "completed" ? <CheckCircle size={18} /> : status === "current" || status === "in_progress" ? <Clock size={18} /> : <Circle size={18} />}
                       </div>
@@ -988,7 +1058,12 @@ const EventTracking = () => {
             <div className="space-y-4">
               <h3 className="font-serif text-headline-md text-foreground">Lịch sử giao dịch</h3>
               {transactions.map(tx => {
-                const canSelectTransaction = tx.status === "pending" && !tx.paymentMethod && Number(tx.amount || 0) > 0;
+                const isFinalPayment = isFinalSettlementTransaction(tx);
+                const canSelectTransaction =
+                  tx.status === "pending" &&
+                  !tx.paymentMethod &&
+                  Number(tx.amount || 0) > 0 &&
+                  (!isFinalPayment || settlementReviewComplete);
                 const isSelectedTransaction = paymentForm.transactionId === tx.id;
                 const transactionStatusLabel =
                   tx.status === "pending" && !tx.paymentMethod
@@ -1017,6 +1092,11 @@ const EventTracking = () => {
                           {isSelectedTransaction ? "Đang chọn" : "Chọn thanh toán"}
                         </Button>
                       )}
+                      {isFinalPayment && !settlementReviewComplete && (
+                        <span className="max-w-48 text-right font-body text-xs text-amber-600">
+                          Chờ chốt nghiệm thu
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -1038,6 +1118,11 @@ const EventTracking = () => {
                 <div className="rounded-lg bg-surface-low px-4 py-3">
                   <p className="font-body text-sm font-semibold text-foreground">Đang chọn: {selectedTransaction.description}</p>
                   <p className="font-body text-xs text-muted-foreground mt-1">Số tiền đợt này: {money(Number(selectedTransaction.amount || 0))}</p>
+                  {isFinalSettlementTransaction(selectedTransaction) && !settlementReviewComplete && (
+                    <p className="mt-2 font-body text-xs font-semibold text-amber-600">
+                      Khách hàng và admin cần chốt toàn bộ hạng mục nghiệm thu trước khi thanh toán đợt cuối.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1086,7 +1171,16 @@ const EventTracking = () => {
                 </div>
               </div>
 
-              <Button variant="hero" className="w-full" onClick={handleSubmitPayment} disabled={paying || paymentLimit <= 0}>
+              <Button
+                variant="hero"
+                className="w-full"
+                onClick={handleSubmitPayment}
+                disabled={
+                  paying ||
+                  paymentLimit <= 0 ||
+                  (isFinalSettlementTransaction(selectedTransaction) && !settlementReviewComplete)
+                }
+              >
                 <CreditCard size={16} /> {paying ? "Đang tạo mã QR..." : "Tạo mã QR thanh toán"}
               </Button>
             </div>
@@ -1139,7 +1233,10 @@ const EventTracking = () => {
               </div>
             </div>
 
-            <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient">
+            <div
+              id="settlement-service-items"
+              className="scroll-mt-28 bg-surface-lowest rounded-xl p-5 shadow-ambient"
+            >
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div className="flex items-center gap-3">
                   <ReceiptText size={18} className="text-primary" />
@@ -1187,6 +1284,9 @@ const EventTracking = () => {
                       const fb = item.id ? settlementFeedbacks[item.id] : undefined;
                       const fbStatus = fb?.status ?? "pending";
                       const isExpanded = expandedFeedback === itemId;
+                      const isPreviouslyAgreed = item.id
+                        ? confirmedSettlementItemIds.has(item.id)
+                        : false;
                       return (
                         <Fragment key={itemId}>
                           <tr className={`border-t border-border transition-colors ${
@@ -1208,18 +1308,20 @@ const EventTracking = () => {
                                     <button
                                       type="button"
                                       title="Đồng ý"
+                                      disabled={isPreviouslyAgreed}
                                       onClick={() => { setItemFeedback(item.id!, "agreed"); setExpandedFeedback(null); }}
                                       className={`p-1.5 rounded-lg transition-all ${
                                         fbStatus === "agreed"
                                           ? "bg-secondary text-secondary-foreground shadow-sm scale-110"
                                           : "bg-surface-low text-muted-foreground hover:bg-secondary/20 hover:text-secondary"
-                                      }`}
+                                      } ${isPreviouslyAgreed ? "cursor-default" : ""}`}
                                     >
                                       <ThumbsUp size={14} />
                                     </button>
                                     <button
                                       type="button"
                                       title="Feedback"
+                                      disabled={isPreviouslyAgreed}
                                       onClick={() => {
                                         setItemFeedback(item.id!, "feedback");
                                         setExpandedFeedback(isExpanded ? null : itemId);
@@ -1228,7 +1330,7 @@ const EventTracking = () => {
                                         fbStatus === "feedback"
                                           ? "bg-destructive text-destructive-foreground shadow-sm scale-110"
                                           : "bg-surface-low text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
-                                      }`}
+                                      } ${isPreviouslyAgreed ? "cursor-not-allowed opacity-40" : ""}`}
                                     >
                                       <ThumbsDown size={14} />
                                     </button>
@@ -1243,7 +1345,9 @@ const EventTracking = () => {
                                     </button>
                                   )}
                                   {fbStatus === "agreed" && (
-                                    <span className="text-[11px] text-secondary font-semibold">Đồng ý</span>
+                                    <span className="text-[11px] text-secondary font-semibold">
+                                      {isPreviouslyAgreed ? "Đã đồng ý trước đó" : "Đồng ý"}
+                                    </span>
                                   )}
                                 </div>
                               ) : (
@@ -1311,7 +1415,11 @@ const EventTracking = () => {
                   <Button
                     variant="hero"
                     onClick={handleSubmitSettlementFeedback}
-                    disabled={feedbackSubmitting || feedbackStats.agreed + feedbackStats.feedback === 0}
+                    disabled={
+                      feedbackSubmitting ||
+                      feedbackStats.pending > 0 ||
+                      feedbackStats.agreed + feedbackStats.feedback === 0
+                    }
                     className="shrink-0"
                   >
                     <ClipboardCheck size={16} />
@@ -1346,13 +1454,15 @@ const EventTracking = () => {
                   <CreditCard size={16} /> Thanh toán phần còn lại
                 </Button>
               )}
-              {hasLiquidatedContract && (
+              {hasSettlementContract && (
                 <Button
                   variant="outline"
                   className="mt-3"
                   onClick={() => {
-                    const liquidatedContract = contractSummaries.find((c) => c.status === "liquidated");
-                    if (liquidatedContract) navigate(`/dashboard/hop-dong/${liquidatedContract.id}?view=settlement`);
+                    const settlementContract = contractSummaries.find((contract) =>
+                      contract.versions?.some((version) => version.purpose === "settlement"),
+                    );
+                    if (settlementContract) navigate(`/dashboard/hop-dong/${settlementContract.id}?view=settlement`);
                   }}
                 >
                   <ClipboardCheck size={16} /> Xem biên bản quyết toán

@@ -24,9 +24,15 @@ type DashboardEvent = {
   note?: string | null;
   status: string;
   progressPercent?: number | null;
+  budgetEstimated?: string | number | null;
   organizerUser?: { displayName: string } | null;
   customerUser?: { displayName: string } | null;
-  consultationRequest?: { customerName?: string | null; eventType?: string | null; note?: string | null } | null;
+  consultationRequest?: {
+    customerName?: string | null;
+    eventType?: string | null;
+    note?: string | null;
+    budgetRange?: string | null;
+  } | null;
 };
 type DashboardContract = { id: string; status: string; totalValue?: string | number | null };
 type Transaction = { id: string; amount: string | number; status: string };
@@ -53,6 +59,10 @@ type CustomerDashboardData = {
 };
 
 const moneyShort = (value: number) => value >= 1_000_000 ? `${Math.round(value / 1_000_000)}tr` : value.toLocaleString("vi-VN");
+const eventBudget = (event: DashboardEvent) =>
+  Number(event.budgetEstimated || 0) > 0
+    ? `${Number(event.budgetEstimated).toLocaleString("vi-VN")}đ`
+    : event.consultationRequest?.budgetRange || undefined;
 
 const CustomerDashboard = () => {
   const { user } = useAuth();
@@ -150,6 +160,7 @@ const CustomerDashboard = () => {
                     eventDate={event.eventDate}
                     managerName={event.organizerUser?.displayName}
                     progressPercent={event.progressPercent}
+                    budget={eventBudget(event)}
                   />
                 </motion.div>
               ))}

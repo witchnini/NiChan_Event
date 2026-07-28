@@ -7,6 +7,10 @@ import { prisma } from "../../lib/prisma";
 import { createError } from "../../middleware/errorHandler";
 import { emitNotification } from "../../lib/socket";
 import { env } from "../../config/env";
+import {
+  emitCustomerNotification,
+  tryFinalizeSettlementPaymentInTransaction,
+} from "./event-lifecycle.service";
 import crypto from "crypto";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -128,6 +132,27 @@ export const createPaymentOrder = async (
   if (contractId) {
     const contract = await prisma.contract.findFirst({
       where: { id: contractId, customerUserId: userId },
+      include: {
+        transactions: {
+          where: { status: "completed" },
+          select: { amount: true },
+        },
+        versions: {
+          where: { purpose: "settlement" },
+          take: 1,
+          orderBy: { createdAt: "desc" },
+          select: {
+            lineItems: {
+              select: {
+                settlementFeedbacks: {
+                  where: { status: "agreed" },
+                  select: { customerId: true },
+                },
+              },
+            },
+          },
+        },
+      },
     });
     if (!contract) {
       throw createError("NOT_FOUND", "Không tìm thấy hợp đồng", 404);
@@ -137,6 +162,27 @@ export const createPaymentOrder = async (
         "INVALID_STATUS",
         "Hợp đồng không ở trạng thái có thể thanh toán",
         400,
+      );
+    }
+
+    const settlement = contract.versions[0];
+    const completedAmount = contract.transactions.reduce(
+      (sum, transaction) => sum + Number(transaction.amount),
+      0,
+    );
+    const wouldCompletePayment =
+      completedAmount + amount + 0.01 >= Number(contract.totalValue);
+    const allSettlementItemsAgreed =
+      Boolean(settlement?.lineItems.length) &&
+      settlement!.lineItems.every((item) =>
+        item.settlementFeedbacks.some((feedback) => feedback.customerId === userId),
+      );
+
+    if (wouldCompletePayment && !allSettlementItemsAgreed) {
+      throw createError(
+        "SETTLEMENT_NOT_AGREED",
+        "Vui lòng hoàn tất nghiệm thu tất cả hạng mục trước khi thanh toán đợt cuối.",
+        409,
       );
     }
   }
@@ -201,16 +247,17 @@ export const createPaymentOrder = async (
 const buildQRInfo = (paymentOrder: {
   orderCode: string;
   amount: any;
-  qrContent: string;
+  qrContent: string | null;
 }): PaymentQRInfo => {
   const amount = Number(paymentOrder.amount);
+  const content = paymentOrder.qrContent || paymentOrder.orderCode;
   return {
-    qrUrl: buildQRUrl(amount, paymentOrder.qrContent),
+    qrUrl: buildQRUrl(amount, content),
     bankAccount: env.sepayBankAccount,
     bankCode: env.sepayBankCode,
     accountHolder: env.sepayAccountHolder,
     amount,
-    content: paymentOrder.qrContent,
+    content,
     orderCode: paymentOrder.orderCode,
   };
 };
@@ -478,12 +525,20 @@ export const handleSepayWebhook = async (
       },
     });
 
-    return { paymentOrder: updated, transaction };
+    const finalization = paymentOrder.contractId
+      ? await tryFinalizeSettlementPaymentInTransaction(tx, paymentOrder.contractId)
+      : null;
+
+    return { paymentOrder: updated, transaction, finalization };
   });
 
   console.log(
     `[SePay Webhook] ✅ Matched & completed: orderCode=${orderCode}, amount=${payload.transferAmount}`,
   );
+
+  if (result.finalization?.notification) {
+    emitCustomerNotification(result.finalization.notification);
+  }
 
   // 7. Gửi notification cho customer
   const customerUserId =
@@ -491,15 +546,25 @@ export const handleSepayWebhook = async (
     paymentOrder.event?.customerUserId;
 
   if (customerUserId) {
-    emitNotification(customerUserId, {
-      type: "payment_completed",
-      title: "Thanh toán thành công",
-      message: `Đã nhận ${payload.transferAmount.toLocaleString("vi-VN")}đ cho mã ${orderCode}`,
+    const notification = await prisma.notification.create({
       data: {
-        paymentOrderId: paymentOrder.id,
-        orderCode,
-        amount: payload.transferAmount,
+        userId: customerUserId,
+        scope: "customer",
+        type: "payment",
+        title: "Thanh toán thành công",
+        message: `Đã nhận ${payload.transferAmount.toLocaleString("vi-VN")}đ cho mã ${orderCode}`,
+        entityType: paymentOrder.contractId ? "contract" : "event",
+        entityId: paymentOrder.contractId || paymentOrder.eventId,
       },
+    });
+    emitNotification(customerUserId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
     });
   }
 
@@ -509,15 +574,25 @@ export const handleSepayWebhook = async (
     paymentOrder.event?.organizerUserId;
 
   if (organizerUserId) {
-    emitNotification(organizerUserId, {
-      type: "payment_received",
-      title: "Nhận thanh toán mới",
-      message: `Khách hàng đã thanh toán ${payload.transferAmount.toLocaleString("vi-VN")}đ — ${orderCode}`,
+    const notification = await prisma.notification.create({
       data: {
-        paymentOrderId: paymentOrder.id,
-        orderCode,
-        amount: payload.transferAmount,
+        userId: organizerUserId,
+        scope: "organizer",
+        type: "payment",
+        title: "Nhận thanh toán mới",
+        message: `Khách hàng đã thanh toán ${payload.transferAmount.toLocaleString("vi-VN")}đ — ${orderCode}`,
+        entityType: paymentOrder.contractId ? "contract" : "event",
+        entityId: paymentOrder.contractId || paymentOrder.eventId,
       },
+    });
+    emitNotification(organizerUserId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
     });
   }
 

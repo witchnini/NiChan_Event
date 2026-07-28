@@ -7,6 +7,7 @@ import { createError } from "../../../middleware/errorHandler";
 import {
   emitCustomerNotification,
   ensureCustomerTrackingInTransaction,
+  getEventProgressPercent,
 } from "../../shared/event-lifecycle.service";
 import { REQUEST_STATUS_TRANSITIONS, RequestStatus } from "../../../types/enums";
 import type { AssignManagerInput, UpdateRequestStatusInput } from "./admin-requests.schema";
@@ -83,7 +84,11 @@ const upsertProjectForConfirmedRequest = async (
         select: { id: true, name: true, status: true, organizerUserId: true, organizerAssignmentStatus: true },
       })
     : tx.event.create({
-        data: { ...eventData, status: "planning" },
+        data: {
+          ...eventData,
+          status: "planning",
+          progressPercent: getEventProgressPercent("planning"),
+        },
         select: { id: true, name: true, status: true, organizerUserId: true, organizerAssignmentStatus: true },
       });
 };
@@ -316,7 +321,7 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
       locationText: true,
       guestCount: true,
       note: true,
-      events: { select: { id: true, name: true, status: true } },
+      events: { select: { id: true, name: true, status: true, progressPercent: true } },
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Request not found", 404);
@@ -373,8 +378,12 @@ export const updateRequestStatus = async (requestId: string, input: UpdateReques
         where: { id: linkedEvent.id },
         data: {
           status: linkedEventStatus,
+          progressPercent:
+            linkedEventStatus === "completed"
+              ? 100
+              : getEventProgressPercent(linkedEventStatus, linkedEvent.progressPercent),
           ...(linkedEventStatus === "completed"
-            ? { progressPercent: 100, completedAt: new Date() }
+            ? { completedAt: new Date() }
             : { completedAt: null }),
         },
       });

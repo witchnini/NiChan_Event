@@ -761,7 +761,7 @@ model SettlementFeedback {
   contractLineItemId String
   contractId         String
   customerId         String
-  status             String   @default("pending") // pending | agreed | feedback
+  status             String   @default("pending") // pending | agreed | feedback | resolved
   feedbackNote       String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

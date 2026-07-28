@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Menu, X, LogOut, User, ChevronDown, Mail, Settings, Shield, LayoutDashboard, Sparkles, Bell } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,6 +9,7 @@ import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { toast } from "sonner";
 import { useChatNotification } from "@/hooks/useChatNotification";
+import { getNotificationRoute } from "@/utils/notificationRoute";
 
 const navLinks = [
   { label: "Trang chủ", path: "/" },
@@ -38,6 +39,9 @@ type CustomerNotification = {
   message: string;
   isRead: boolean;
   createdAt: string;
+  type?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
 };
 
 const formatNotificationTime = (value: string) =>
@@ -63,6 +67,7 @@ const Navbar = () => {
   const serviceDropdownRef = useRef<HTMLDivElement>(null);
   const serviceDropdownTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const isCustomerRoute = location.pathname.startsWith("/dashboard");
   const currentRole = user?.role ?? null;
@@ -146,6 +151,9 @@ const Navbar = () => {
       title?: string | null;
       message: string;
       createdAt: string;
+      type?: string | null;
+      entityType?: string | null;
+      entityId?: string | null;
     }) => {
       setNotifications((prev) => (
         prev.some((notification) => notification.id === payload.id)
@@ -207,6 +215,33 @@ const Navbar = () => {
     }
   };
 
+  const openNotification = async (notification: CustomerNotification) => {
+    await markNotificationAsRead(notification.id);
+    setNotifOpen(false);
+
+    if (
+      (notification.type === "settlement" || notification.type === "settlement_feedback") &&
+      notification.entityType === "contract" &&
+      notification.entityId
+    ) {
+      try {
+        const contract = await apiClient.get<{ eventId?: string | null }>(
+          `/customer/contracts/${notification.entityId}`,
+        );
+        if (contract.eventId) {
+          navigate(
+            `/dashboard/su-kien/${encodeURIComponent(contract.eventId)}?tab=settlement#settlement-service-items`,
+          );
+          return;
+        }
+      } catch {
+        toast.error("Không thể mở sự kiện nghiệm thu");
+      }
+    }
+
+    navigate(getNotificationRoute(notification, "customer"));
+  };
+
   const handleLogout = async () => {
     setProfileOpen(false);
     setNotifOpen(false);
@@ -237,7 +272,7 @@ const Navbar = () => {
             {notifications.map((notification) => (
               <button
                 key={notification.id}
-                onClick={() => markNotificationAsRead(notification.id)}
+                onClick={() => void openNotification(notification)}
                 className={`w-full text-left p-4 border-b border-border hover:bg-surface-low transition-colors ${!notification.isRead ? "bg-primary/5" : ""}`}
               >
                 <div className="flex items-start gap-3">

@@ -2,6 +2,11 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
+import {
+  emitCustomerNotification,
+  notifyCustomerForEvent,
+  tryFinalizeSettlementPaymentInTransaction,
+} from "../../shared/event-lifecycle.service";
 
 export const transactionSchema = z.object({
   eventId: z.string().uuid().optional().nullable(),
@@ -321,18 +326,39 @@ export const listTransactions = async (filters: {
 
 export const createTransaction = async (input: TransactionInput) => {
   const relation = await normalizeTransactionRelations(input);
-  return prisma.transaction.create({
-    data: {
-      eventId: relation.eventId,
-      contractId: relation.contractId,
-      description: input.description,
-      amount: input.amount,
-      transactionDate: new Date(input.transactionDate),
-      paymentMethod: input.paymentMethod || null,
-      status: input.status,
-    },
-    include: transactionInclude,
+  const result = await prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.create({
+      data: {
+        eventId: relation.eventId,
+        contractId: relation.contractId,
+        description: input.description,
+        amount: input.amount,
+        transactionDate: new Date(input.transactionDate),
+        paymentMethod: input.paymentMethod || null,
+        status: input.status,
+      },
+      include: transactionInclude,
+    });
+    const finalization =
+      input.status === "completed" && transaction.contractId
+        ? await tryFinalizeSettlementPaymentInTransaction(tx, transaction.contractId)
+        : null;
+    return { transaction, finalization };
   });
+  const { transaction } = result;
+  if (result.finalization?.notification) {
+    emitCustomerNotification(result.finalization.notification);
+  }
+  if (transaction.eventId) {
+    await notifyCustomerForEvent(transaction.eventId, {
+      type: "payment",
+      title: "Lịch thanh toán đã được cập nhật",
+      message: `Đã thêm khoản thanh toán "${transaction.description}".`,
+      entityType: "transaction",
+      entityId: transaction.id,
+    });
+  }
+  return transaction;
 };
 
 export const updateTransaction = async (id: string, input: Partial<TransactionInput>) => {
@@ -359,13 +385,42 @@ export const updateTransaction = async (id: string, input: Partial<TransactionIn
     data.eventId = relation.eventId;
   }
 
-  return prisma.transaction.update({
-    where: { id },
-    data,
-    include: transactionInclude,
+  const result = await prisma.$transaction(async (tx) => {
+    const transaction = await tx.transaction.update({
+      where: { id },
+      data,
+      include: transactionInclude,
+    });
+    const finalization =
+      transaction.status === "completed" && transaction.contractId
+        ? await tryFinalizeSettlementPaymentInTransaction(tx, transaction.contractId)
+        : null;
+    return { transaction, finalization };
   });
+  const { transaction } = result;
+  if (result.finalization?.notification) {
+    emitCustomerNotification(result.finalization.notification);
+  }
+  if (transaction.eventId) {
+    await notifyCustomerForEvent(transaction.eventId, {
+      type: "payment",
+      title: "Khoản thanh toán đã được cập nhật",
+      message: `Thông tin khoản thanh toán "${transaction.description}" đã thay đổi.`,
+      entityType: "transaction",
+      entityId: transaction.id,
+    });
+  }
+  return transaction;
 };
 
 export const deleteTransaction = async (id: string) => {
-  return prisma.transaction.delete({ where: { id } });
+  const transaction = await prisma.transaction.delete({ where: { id } });
+  if (transaction.eventId) {
+    await notifyCustomerForEvent(transaction.eventId, {
+      type: "payment",
+      title: "Lịch thanh toán đã được cập nhật",
+      message: `Khoản thanh toán "${transaction.description}" đã được xóa khỏi lịch.`,
+    });
+  }
+  return transaction;
 };

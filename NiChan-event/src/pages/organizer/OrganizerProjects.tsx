@@ -12,6 +12,7 @@ import {
   Eye,
   ListChecks,
   Mail,
+  MapPin,
   Milestone,
   Phone,
   PlayCircle,
@@ -634,6 +635,8 @@ const OrganizerProjects = () => {
   const [vendorDialogOpen, setVendorDialogOpen] = useState(false);
   const [vendorListOpen, setVendorListOpen] = useState(false);
   const [vendorEditorOpen, setVendorEditorOpen] = useState(false);
+  const [viewVendorItem, setViewVendorItem] = useState<VendorOption | null>(null);
+  const [vendorDetailFromList, setVendorDetailFromList] = useState(false);
   const [staffDialogOpen, setStaffDialogOpen] = useState(false);
   const [staffListOpen, setStaffListOpen] = useState(false);
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
@@ -766,7 +769,7 @@ const OrganizerProjects = () => {
     if (!keyword) return vendors;
 
     return vendors.filter((vendor) =>
-      [vendor.name, vendor.category?.name, vendor.contactName, vendor.phone, vendor.email]
+      [vendor.name, vendor.category?.name, vendor.contactName, vendor.phone, vendor.email, vendor.address]
         .some((value) => value?.toLowerCase().includes(keyword)),
     );
   }, [vendorSearch, vendors]);
@@ -1334,6 +1337,18 @@ const OrganizerProjects = () => {
     setVendorForm({ vendorId, serviceNote: "" });
     setVendorListOpen(false);
     setVendorDialogOpen(true);
+  };
+
+  const openVendorDetails = (vendor: VendorOption, fromList = false) => {
+    setVendorDetailFromList(fromList);
+    if (fromList) setVendorListOpen(false);
+    setViewVendorItem(vendor);
+  };
+
+  const closeVendorDetails = () => {
+    setViewVendorItem(null);
+    if (vendorDetailFromList) setVendorListOpen(true);
+    setVendorDetailFromList(false);
   };
 
   const openCreateVendor = () => {
@@ -2329,6 +2344,13 @@ const OrganizerProjects = () => {
                           </div>
                           <div className="flex items-center gap-2">
                             <button
+                              onClick={() => openVendorDetails(assignment.vendor)}
+                              className="text-muted-foreground hover:text-primary"
+                              title="Xem thông tin nhà cung cấp"
+                            >
+                              <Eye size={14} />
+                            </button>
+                            <button
                               onClick={() => openEditVendor(assignment)}
                               className="text-muted-foreground hover:text-primary"
                               title="Chỉnh sửa nhà cung cấp"
@@ -2347,6 +2369,10 @@ const OrganizerProjects = () => {
                         <div className="mt-3 space-y-1 font-body text-xs text-muted-foreground">
                           <p>Phạm vi: <span className="text-foreground font-semibold">{assignment.serviceNote || "Chưa ghi chú"}</span></p>
                           <p>Liên hệ: {assignment.vendor.phone || assignment.vendor.email || "-"}</p>
+                          <p className="flex items-start gap-1">
+                            <MapPin size={12} className="mt-0.5 shrink-0" />
+                            <span>{assignment.vendor.address || "Chưa có địa chỉ"}</span>
+                          </p>
                           <p>Hạng mục: {statsForVendor.count} · Dự toán {formatCurrency(statsForVendor.estimated)}</p>
                           <p>Thực tế: {formatCurrency(statsForVendor.actual)}</p>
                         </div>
@@ -2694,7 +2720,7 @@ const OrganizerProjects = () => {
                 <option value="">Chọn nhà cung cấp</option>
                 {availableVendorsForProject.map((vendor) => (
                   <option key={vendor.id} value={vendor.id}>
-                    {vendor.name} - {vendor.category?.name || vendor.phone || vendor.email || "NCC"}
+                    {vendor.name} - {vendor.category?.name || "NCC"} - {vendor.address || "Chưa có địa chỉ"}
                   </option>
                 ))}
               </select>
@@ -2730,7 +2756,7 @@ const OrganizerProjects = () => {
             <Input
               value={vendorSearch}
               onChange={(event) => setVendorSearch(event.target.value)}
-              placeholder="Tìm theo tên, danh mục hoặc liên hệ..."
+              placeholder="Tìm theo tên, danh mục, liên hệ hoặc địa chỉ..."
               className="pl-9 rounded-xl border-none bg-surface-low"
             />
           </div>
@@ -2759,16 +2785,30 @@ const OrganizerProjects = () => {
                     <p className="mt-1 font-body text-xs text-muted-foreground">
                       {vendor.category?.name ?? "Chưa phân loại"} · {vendor.contactName || vendor.phone || vendor.email || "Chưa có liên hệ"}
                     </p>
+                    <p className="mt-1 flex items-start gap-1 font-body text-xs text-muted-foreground">
+                      <MapPin size={12} className="mt-0.5 shrink-0" />
+                      <span>{vendor.address || "Chưa có địa chỉ"}</span>
+                    </p>
                   </div>
-                  <Button
-                    variant={assigned ? "outline" : "hero"}
-                    size="sm"
-                    className="shrink-0 rounded-xl"
-                    disabled={assigned || inactive}
-                    onClick={() => openAssignVendorFromList(vendor.id)}
-                  >
-                    {assigned ? "Đã gắn" : inactive ? "Không khả dụng" : "Chọn NCC"}
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl"
+                      onClick={() => openVendorDetails(vendor, true)}
+                    >
+                      <Eye size={14} /> Chi tiết
+                    </Button>
+                    <Button
+                      variant={assigned ? "outline" : "hero"}
+                      size="sm"
+                      className="rounded-xl"
+                      disabled={assigned || inactive}
+                      onClick={() => openAssignVendorFromList(vendor.id)}
+                    >
+                      {assigned ? "Đã gắn" : inactive ? "Không khả dụng" : "Chọn NCC"}
+                    </Button>
+                  </div>
                 </div>
               );
             })}
@@ -2782,6 +2822,50 @@ const OrganizerProjects = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setVendorListOpen(false)}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!viewVendorItem}
+        onOpenChange={(open) => {
+          if (!open) closeVendorDetails();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif">Thông tin nhà cung cấp</DialogTitle>
+            <DialogDescription>
+              Thông tin liên hệ và trạng thái hợp tác của nhà cung cấp.
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewVendorItem && (
+            <div className="space-y-4 font-body text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Tên nhà cung cấp</p>
+                <p className="mt-1 text-base font-semibold text-foreground">{viewVendorItem.name}</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Info label="Danh mục" value={viewVendorItem.category?.name ?? "Chưa phân loại"} />
+                <Info
+                  label="Trạng thái"
+                  value={vendorStatusLabel[viewVendorItem.status ?? "active"] ?? viewVendorItem.status ?? "-"}
+                />
+                <Info label="Người liên hệ" value={viewVendorItem.contactName || "Chưa cập nhật"} />
+                <Info label="Số điện thoại" value={viewVendorItem.phone || "Chưa cập nhật"} />
+                <Info label="Email" value={viewVendorItem.email || "Chưa cập nhật"} />
+                <Info
+                  label="Số tài khoản ngân hàng"
+                  value={viewVendorItem.bankAccountNumber || "Chưa cập nhật"}
+                />
+              </div>
+              <Info label="Địa chỉ" value={viewVendorItem.address || "Chưa cập nhật"} />
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeVendorDetails}>Đóng</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

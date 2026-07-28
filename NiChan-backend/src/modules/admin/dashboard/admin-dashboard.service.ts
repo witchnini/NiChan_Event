@@ -1,5 +1,6 @@
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
+import { getEventProgressPercent } from "../../shared/event-lifecycle.service";
 
 // Percent change between two periods. Returns a signed integer percentage.
 // When the previous period is empty we report +100% for any growth, 0% for none.
@@ -27,6 +28,9 @@ export const getAdminDashboard = async () => {
     customersLastMonth,
     revenueThisMonth,
     revenueLastMonth,
+    unassignedRequests,
+    overdueTasks,
+    contractsAwaitingResponse,
     recentRequests,
     upcomingEvents,
     eventsByType,
@@ -52,20 +56,43 @@ export const getAdminDashboard = async () => {
       where: { transactionDate: { gte: lastMonthStart, lt: monthStart }, status: "completed" },
       _sum: { amount: true },
     }),
+    prisma.consultationRequest.count({
+      where: {
+        assignedManagerId: null,
+        status: { notIn: ["completed", "cancelled", "rejected"] },
+      },
+    }),
+    prisma.projectTask.count({
+      where: {
+        dueAt: { lt: now },
+        status: { not: "done" },
+      },
+    }),
+    prisma.contract.count({ where: { status: "sent" } }),
     // recent requests
     prisma.consultationRequest.findMany({
       orderBy: { createdAt: "desc" },
       take: 5,
-      include: { assignedManager: { select: { id: true, displayName: true } } },
+      select: {
+        id: true,
+        customerName: true,
+        eventType: true,
+        budgetRange: true,
+        status: true,
+        createdAt: true,
+      },
     }),
     // upcoming events
     prisma.event.findMany({
       where: { eventDate: { gte: now }, status: { not: "cancelled" } },
       orderBy: { eventDate: "asc" },
       take: 5,
-      include: {
-        customerUser: { select: { id: true, displayName: true } },
-        organizerUser: { select: { id: true, displayName: true } },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        eventDate: true,
+        progressPercent: true,
       },
     }),
     // events by type
@@ -73,8 +100,7 @@ export const getAdminDashboard = async () => {
   ]);
 
   // monthly revenue per month (last 12 months) for chart
-  const twelveMonthsAgo = new Date(now);
-  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
 
   const monthlyTransactions = await prisma.transaction.findMany({
     where: { transactionDate: { gte: twelveMonthsAgo }, status: "completed" },
@@ -83,6 +109,12 @@ export const getAdminDashboard = async () => {
 
   // Group by month in JS
   const revenueMap: Record<string, number> = {};
+  for (let offset = 11; offset >= 0; offset -= 1) {
+    const month = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+    const key = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+    revenueMap[key] = 0;
+  }
+
   for (const tx of monthlyTransactions) {
     const key = `${tx.transactionDate.getFullYear()}-${String(tx.transactionDate.getMonth() + 1).padStart(2, "0")}`;
     revenueMap[key] = (revenueMap[key] ?? 0) + Number(tx.amount);
@@ -107,10 +139,18 @@ export const getAdminDashboard = async () => {
       monthlyRevenue: monthlyRevenueValue,
       revenueTrend: pctChange(monthlyRevenueValue, lastMonthRevenueValue),
     },
+    actionItems: {
+      unassignedRequests,
+      overdueTasks,
+      contractsAwaitingResponse,
+    },
     monthlyRevenue: revenueMap,
     eventTypes: eventsByType,
     recentRequests,
-    upcomingEvents,
+    upcomingEvents: upcomingEvents.map(({ status, ...event }) => ({
+      ...event,
+      progressPercent: getEventProgressPercent(status, event.progressPercent),
+    })),
   };
 };
 

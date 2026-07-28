@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, FileText, Users, DollarSign,
@@ -10,6 +10,7 @@ import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { getNotificationRoute } from "@/utils/notificationRoute";
 
 const sidebarItems = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/admin" },
@@ -44,6 +45,9 @@ type AppNotification = {
   message: string;
   isRead: boolean;
   createdAt: string;
+  type?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
 };
 
 const formatNotificationTime = (value: string) =>
@@ -62,6 +66,7 @@ const AdminLayout = () => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [profile, setProfile] = useState<AdminProfileResponse | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
@@ -93,11 +98,11 @@ const AdminLayout = () => {
   // Real-time: nhận thông báo mới qua Socket.IO và thêm vào đầu danh sách.
   useEffect(() => {
     const socket = getSocket();
-    const handleNotification = (payload: { id: string; message: string; createdAt: string }) => {
+    const handleNotification = (payload: AppNotification) => {
       setNotifications((prev) => (
         prev.some((n) => n.id === payload.id)
           ? prev
-          : [{ id: payload.id, message: payload.message, isRead: false, createdAt: payload.createdAt }, ...prev]
+          : [{ ...payload, isRead: false }, ...prev]
       ));
     };
     socket.on("notification", handleNotification);
@@ -136,6 +141,12 @@ const AdminLayout = () => {
     } catch {
       toast.error("Không thể cập nhật tất cả thông báo");
     }
+  };
+
+  const openNotification = async (notification: AppNotification) => {
+    await markAsRead(notification.id);
+    setNotifOpen(false);
+    navigate(getNotificationRoute(notification, "admin"));
   };
 
   const handleLogout = async () => {
@@ -236,7 +247,7 @@ const AdminLayout = () => {
                       </div>
                       <div className="max-h-80 overflow-y-auto">
                         {notifications.map((notification) => (
-                          <button key={notification.id} onClick={() => markAsRead(notification.id)}
+                          <button key={notification.id} onClick={() => void openNotification(notification)}
                             className={`w-full text-left p-4 border-b border-border hover:bg-surface-low transition-colors ${!notification.isRead ? "bg-primary/5" : ""}`}
                           >
                             <div className="flex items-start gap-3">

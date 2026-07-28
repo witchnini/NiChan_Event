@@ -188,7 +188,7 @@ const AdminVendors = () => {
     setEditItem(vendor);
   };
 
-  const VendorForm = () => (
+  const renderVendorForm = () => (
     <div className="space-y-4">
       <div>
         <label className="font-body text-sm text-foreground mb-1 block">
@@ -459,7 +459,7 @@ const AdminVendors = () => {
           <DialogHeader>
             <DialogTitle className="font-serif">Thêm nhà cung cấp</DialogTitle>
           </DialogHeader>
-          <VendorForm />
+          {renderVendorForm()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
               Hủy
@@ -478,7 +478,7 @@ const AdminVendors = () => {
               Chỉnh sửa nhà cung cấp
             </DialogTitle>
           </DialogHeader>
-          <VendorForm />
+          {renderVendorForm()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditItem(null)}>
               Hủy

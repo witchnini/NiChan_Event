@@ -1,5 +1,6 @@
 import { prisma } from "../../../lib/prisma";
 import { createError } from "../../../middleware/errorHandler";
+import { notifyCustomerForEvent } from "../../shared/event-lifecycle.service";
 
 // Chat dùng lại logic của customer (ensureEventAccess đã hỗ trợ cả organizer)
 export { getChatMessages, sendChatMessage, deleteChatMessage } from "../../customer/customer.service";
@@ -53,6 +54,12 @@ export const createOrganizerDocument = async (
     },
   });
 
+  await notifyCustomerForEvent(eventId, {
+    type: "document",
+    title: "Có tài liệu mới",
+    message: `Ban tổ chức đã thêm tài liệu "${input.name}" vào sự kiện ${event.name}.`,
+    entityType: "event",
+  });
   return document;
 };
 
@@ -84,5 +91,11 @@ export const deleteOrganizerDocument = async (
     });
   });
 
+  await notifyCustomerForEvent(eventId, {
+    type: "document",
+    title: "Tài liệu sự kiện đã thay đổi",
+    message: `Ban tổ chức đã xóa tài liệu "${document.name}" khỏi sự kiện ${event.name}.`,
+    entityType: "event",
+  });
   return { deleted: true };
 };
