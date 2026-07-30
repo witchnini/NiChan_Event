@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import ContractDocument, { type FullContract } from "./ContractDocument";
-import { exportContractPdf } from "@/lib/contractPdf";
+import { exportContractPdf, getContractPdfErrorMessage } from "@/lib/contractPdf";
 import { apiClient } from "@/services/apiClient";
 
 type Props = {
@@ -72,8 +72,10 @@ const ContractPdfButton = ({
     setExporting(true);
     try {
       await exportContractPdf(ref.current, previewContract.contractCode);
+      toast.success("Đã lưu hợp đồng PDF");
     } catch (error) {
-      toast.error("Không tạo được file PDF");
+      console.error("Không tạo được file hợp đồng PDF:", error);
+      toast.error(getContractPdfErrorMessage(error), { duration: 10_000 });
     } finally {
       setExporting(false);
     }

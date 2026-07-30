@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { FileText, Eye, CheckCircle, Download, CreditCard } from "lucide-react";
+import { FileText, Eye, CheckCircle, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import ContractPdfButton from "@/components/features/contracts/ContractPdfButton";
 import SectionHeading from "@/components/ui/section-heading";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
@@ -145,14 +146,14 @@ const MyContracts = () => {
                   >
                     <Eye size={16} /> Xem
                   </Button>
-                  <Button
+                  <ContractPdfButton
+                    detailPath={`/customer/contracts/${contract.id}`}
+                    label="PDF"
                     variant="ghost"
                     size="sm"
                     className="h-9 rounded-lg px-3 text-muted-foreground hover:text-foreground"
-                    onClick={() => openContract(contract)}
-                  >
-                    <Download size={16} /> PDF
-                  </Button>
+                    title={`Lưu hợp đồng ${contract.contractCode} thành file PDF`}
+                  />
                 </div>
               </div>
             </motion.div>

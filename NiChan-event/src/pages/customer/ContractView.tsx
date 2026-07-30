@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { apiClient } from "@/services/apiClient";
 import { toast } from "sonner";
 import ContractDocument, { type FullContract } from "@/components/features/contracts/ContractDocument";
-import { exportContractPdf } from "@/lib/contractPdf";
+import { exportContractPdf, getContractPdfErrorMessage } from "@/lib/contractPdf";
 import { useAuth } from "@/contexts/AuthContext";
 import PaymentQRModal from "@/components/features/payment/PaymentQRModal";
 import PaymentHistory from "@/components/features/payment/PaymentHistory";
@@ -75,7 +75,7 @@ const ContractView = () => {
       }
     };
     void load();
-  }, [id, user?.role]);
+  }, [id, user?.role, searchParams]);
 
   const hasSettlement = contract?.versions?.some((v) => v.purpose === "settlement") ?? false;
   const hasOriginal = contract?.versions?.some((v) => (v.purpose ?? "original") === "original") ?? false;
@@ -88,8 +88,10 @@ const ContractView = () => {
     try {
       const suffix = viewPurpose === "settlement" ? "_quyet-toan" : "";
       await exportContractPdf(docRef.current, contract.contractCode + suffix);
+      toast.success("Đã lưu hợp đồng PDF");
     } catch (error) {
-      toast.error("Không tạo được file PDF");
+      console.error("Không tạo được file hợp đồng PDF:", error);
+      toast.error(getContractPdfErrorMessage(error), { duration: 10_000 });
     } finally {
       setExporting(false);
     }
@@ -104,7 +106,7 @@ const ContractView = () => {
   const handlePayment = async () => {
     if (!contract) return;
     try {
-      const totalValue = Number((contract as any).totalValue || 0);
+      const totalValue = Number(contract.totalValue || 0);
       const type = contract.status === "sent" ? "deposit" : "contract_payment";
       const amount = type === "deposit" ? Math.round(totalValue * 0.3) : totalValue;
       const desc =
@@ -114,7 +116,7 @@ const ContractView = () => {
 
       const result = await createPayment({
         contractId: contract.id,
-        eventId: (contract as any).eventId,
+        eventId: contract.event?.id,
         type,
         amount,
         description: desc,
@@ -123,8 +125,8 @@ const ContractView = () => {
       setCurrentPaymentId(result.paymentOrder.id);
       setCurrentQRInfo(result.qr);
       setPaymentModalOpen(true);
-    } catch (err: any) {
-      toast.error(err?.message || "Không thể tạo lệnh thanh toán");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Không thể tạo lệnh thanh toán");
     }
   };
 
