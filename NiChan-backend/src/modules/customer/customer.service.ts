@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { createError } from "../../middleware/errorHandler";
-import { emitNewMessage, emitMessageDeleted, emitNotification } from "../../lib/socket";
+import { emitNewMessage, emitMessageDeleted, emitNotification, emitToRole } from "../../lib/socket";
 import {
   emitCustomerNotification,
   getEventProgressPercent,
@@ -827,14 +827,18 @@ export const respondToContract = async (
 
       await tx.event.update({
         where: { id: contract.eventId },
-        data: { status: "planning" },
+        data: {
+          status: "planning",
+          progressPercent: getEventProgressPercent("planning"),
+          completedAt: null,
+        },
       });
 
       if (contract.event.consultationRequestId) {
         await tx.consultationRequest.update({
           where: { id: contract.event.consultationRequestId },
           data: {
-            status: "confirmed",
+            status: "planning",
             confirmedAt: now,
           },
         });
@@ -902,6 +906,13 @@ export const respondToContract = async (
         entityType: result.organizerNotification.entityType,
         entityId: result.organizerNotification.entityId,
         createdAt: result.organizerNotification.createdAt,
+      });
+    }
+
+    if (contract.event.consultationRequestId) {
+      emitToRole("admin", "consultation_request_updated", {
+        requestId: contract.event.consultationRequestId,
+        status: "planning",
       });
     }
 

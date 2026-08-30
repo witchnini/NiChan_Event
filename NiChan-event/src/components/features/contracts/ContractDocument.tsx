@@ -204,10 +204,13 @@ type ContractDocumentProps = {
 };
 
 const ContractDocument = forwardRef<HTMLDivElement, ContractDocumentProps>(({ contract, versionPurpose }, ref) => {
-  // Pick version based on purpose prop, falling back to the first version
-  const version = versionPurpose
-    ? contract.versions?.find((v) => v.purpose === versionPurpose) ?? contract.versions?.[0]
-    : contract.versions?.[0];
+  // Older contract versions may not have `purpose`; those are original versions.
+  // Do not fall back to a settlement when the original tab is selected.
+  const version = versionPurpose === "original"
+    ? contract.versions?.find((v) => (v.purpose ?? "original") === "original")
+    : versionPurpose === "settlement"
+      ? contract.versions?.find((v) => v.purpose === "settlement")
+      : contract.versions?.[0];
   const isSettlement = (version?.purpose ?? "original") === "settlement";
   const lineItems = version?.lineItems ?? [];
   const customerName = contract.customerUser?.displayName ?? contract.event?.consultationRequest?.customerName ?? "...";

@@ -2,6 +2,7 @@ export type NotificationAudience = "customer" | "admin" | "organizer";
 
 export type RoutableNotification = {
   type?: string | null;
+  message?: string | null;
   entityType?: string | null;
   entityId?: string | null;
 };
@@ -9,11 +10,18 @@ export type RoutableNotification = {
 const withId = (path: string, id?: string | null) =>
   id ? `${path}/${encodeURIComponent(id)}` : path;
 
+const adminRequestNotificationTypes = new Set([
+  "request",
+  "request_status",
+  "request_assignment_accepted",
+  "request_assignment_rejected",
+]);
+
 export const getNotificationRoute = (
   notification: RoutableNotification,
   audience: NotificationAudience,
 ) => {
-  const { entityType, entityId, type } = notification;
+  const { entityType, entityId, message, type } = notification;
 
   if (audience === "customer") {
     if (type === "planning" && entityType === "event" && entityId) {
@@ -44,7 +52,16 @@ export const getNotificationRoute = (
       return `/admin/hop-dong?settlementFeedback=${encodeURIComponent(entityId)}`;
     }
     if (entityType === "contract") return withId("/admin/hop-dong", entityId);
-    if (entityType === "request") return "/admin/yeu-cau";
+    if ((entityType === "request" || entityType === "consultation_request") && entityId) {
+      return `/admin/yeu-cau?requestId=${encodeURIComponent(entityId)}`;
+    }
+    if (
+      entityType === "request"
+      || entityType === "consultation_request"
+      || (type && adminRequestNotificationTypes.has(type))
+    ) {
+      return "/admin/yeu-cau";
+    }
     if (entityType === "event" || type === "project" || type === "task") return "/admin/du-an";
     if (entityType === "transaction" || type === "payment") return "/admin/tai-chinh";
     if (type === "contract") return "/admin/hop-dong";
@@ -54,6 +71,17 @@ export const getNotificationRoute = (
   }
 
   if (entityType === "contract") return withId("/ban-to-chuc/hop-dong", entityId);
+  if (entityType === "consultation_request" && entityId) {
+    return `/ban-to-chuc/du-an?requestId=${encodeURIComponent(entityId)}`;
+  }
+  if (type === "request") return "/ban-to-chuc/du-an?assignments=open";
+  if (type === "project_assignment" && entityId) {
+    return `/ban-to-chuc/du-an?assignmentId=${encodeURIComponent(entityId)}`;
+  }
+  if (type === "project_assignment") return "/ban-to-chuc/du-an?assignments=open";
+  if (type === "project" && entityType === "event" && entityId && message?.includes("phân công dự án")) {
+    return `/ban-to-chuc/du-an?assignmentId=${encodeURIComponent(entityId)}`;
+  }
   if (entityType === "event" || type === "project" || type === "task") {
     return "/ban-to-chuc/du-an";
   }

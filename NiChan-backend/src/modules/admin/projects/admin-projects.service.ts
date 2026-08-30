@@ -490,7 +490,7 @@ export const updateAdminProjectOrganizer = async (
       data: {
         userId: input.organizerUserId,
         scope: "organizer",
-        type: "project",
+        type: "project_assignment",
         title: "Dự án mới được phân công",
         message: `Bạn được phân công dự án ${project.name}.`,
         entityType: "event",

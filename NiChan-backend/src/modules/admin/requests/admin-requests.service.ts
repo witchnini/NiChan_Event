@@ -102,8 +102,34 @@ export const listRequests = async (filters: {
   sortBy?: string;
   sortOrder: "asc" | "desc";
 }) => {
+  const requestStatusByEventStatus: Record<string, string> = {
+    quoted: "quoted",
+    contracted: "confirmed",
+    planning: "planning",
+    in_progress: "in_progress",
+    completed: "completed",
+    cancelled: "cancelled",
+  };
+  const eventStatusByRequestStatus = Object.fromEntries(
+    Object.entries(requestStatusByEventStatus).map(([eventStatus, requestStatus]) => [requestStatus, eventStatus]),
+  );
+  const projectStatuses = Object.keys(requestStatusByEventStatus);
+  const matchingEventStatus = filters.status
+    ? eventStatusByRequestStatus[filters.status]
+    : undefined;
+  const effectiveStatusWhere = filters.status
+    ? {
+        OR: [
+          ...(matchingEventStatus ? [{ events: { some: { status: matchingEventStatus } } }] : []),
+          {
+            status: filters.status,
+            events: { none: { status: { in: projectStatuses } } },
+          },
+        ],
+      }
+    : {};
   const where = {
-    ...(filters.status ? { status: filters.status } : {}),
+    ...effectiveStatusWhere,
     ...(filters.managerId ? { assignedManagerId: filters.managerId } : {}),
     ...(filters.search
       ? {
@@ -131,13 +157,24 @@ export const listRequests = async (filters: {
           },
           orderBy: { assignedAt: "desc" },
         },
+        events: {
+          select: { status: true },
+          orderBy: { updatedAt: "desc" },
+          take: 1,
+        },
         _count: { select: { events: true } },
       },
     }),
     prisma.consultationRequest.count({ where }),
   ]);
 
-  return { items, total };
+  return {
+    items: items.map(({ events, ...request }) => ({
+      ...request,
+      status: requestStatusByEventStatus[events[0]?.status] ?? request.status,
+    })),
+    total,
+  };
 };
 
 export const getRequestById = async (id: string) => {

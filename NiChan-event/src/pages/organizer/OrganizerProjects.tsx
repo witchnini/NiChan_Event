@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Edit2,
   Eye,
+  GripVertical,
   ListChecks,
   Mail,
   MapPin,
@@ -22,7 +23,7 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,6 +39,7 @@ import { apiClient } from "@/services/apiClient";
 import { getSocket } from "@/services/socket";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { getLocationMatchScore, normalizeLocation } from "@/lib/vendorLocation";
 import {
   eventStatusLabels,
   eventStatusColors,
@@ -175,6 +177,8 @@ type ProjectStaffResponse = {
 };
 
 type VendorCategory = { id: string; name: string };
+
+type VendorSort = "location" | "name" | "status";
 
 type VendorOption = {
   id: string;
@@ -616,6 +620,7 @@ const getProjectCustomerName = (project: Pick<Project, "customerUser" | "consult
 const OrganizerProjects = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
   const [requestAssignments, setRequestAssignments] = useState<OrganizerRequestAssignment[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
@@ -642,6 +647,9 @@ const OrganizerProjects = () => {
   const [createStaffDialogOpen, setCreateStaffDialogOpen] = useState(false);
   const [viewStaffItem, setViewStaffItem] = useState<StaffOption | null>(null);
   const [editingTask, setEditingTask] = useState<KanbanTask | null>(null);
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
+  const [movingTaskId, setMovingTaskId] = useState<string | null>(null);
   const [customTaskMode, setCustomTaskMode] = useState(false);
   const [taskTemplateSearch, setTaskTemplateSearch] = useState("");
   const [selectedTaskTemplateIds, setSelectedTaskTemplateIds] = useState<string[]>([]);
@@ -649,6 +657,7 @@ const OrganizerProjects = () => {
   const [form, setForm] = useState(emptyForm);
   const [vendorForm, setVendorForm] = useState(emptyVendorForm);
   const [vendorSearch, setVendorSearch] = useState("");
+  const [vendorSort, setVendorSort] = useState<VendorSort>("location");
   const [vendorEditorForm, setVendorEditorForm] = useState(emptyVendorEditorForm);
   const [editingProjectVendor, setEditingProjectVendor] = useState<ProjectVendor | null>(null);
   const [vendorSaving, setVendorSaving] = useState(false);
@@ -761,18 +770,44 @@ const OrganizerProjects = () => {
 
   const availableVendorsForProject = useMemo(() => {
     const assignedIds = new Set(projectVendors.map((assignment) => assignment.vendorId));
-    return assignableVendorChoices.filter((vendor) => !assignedIds.has(vendor.id));
-  }, [assignableVendorChoices, projectVendors]);
+    const projectLocation = activeProject?.locationText;
+    return assignableVendorChoices
+      .filter((vendor) => !assignedIds.has(vendor.id))
+      .map((vendor, index) => ({ vendor, index }))
+      .sort((left, right) =>
+        getLocationMatchScore(projectLocation, right.vendor.address)
+        - getLocationMatchScore(projectLocation, left.vendor.address)
+        || left.index - right.index,
+      )
+      .map(({ vendor }) => vendor);
+  }, [activeProject?.locationText, assignableVendorChoices, projectVendors]);
 
   const filteredVendorCatalog = useMemo(() => {
-    const keyword = vendorSearch.trim().toLowerCase();
-    if (!keyword) return vendors;
+    const keyword = normalizeLocation(vendorSearch);
+    const projectLocation = activeProject?.locationText;
+    const filtered = keyword
+      ? vendors.filter((vendor) =>
+          [vendor.name, vendor.category?.name, vendor.contactName, vendor.phone, vendor.email, vendor.address]
+            .some((value) => normalizeLocation(value).includes(keyword)),
+        )
+      : vendors;
 
-    return vendors.filter((vendor) =>
-      [vendor.name, vendor.category?.name, vendor.contactName, vendor.phone, vendor.email, vendor.address]
-        .some((value) => value?.toLowerCase().includes(keyword)),
-    );
-  }, [vendorSearch, vendors]);
+    return filtered
+      .map((vendor, index) => ({ vendor, index }))
+      .sort((left, right) => {
+        if (vendorSort === "location") {
+          return getLocationMatchScore(projectLocation, right.vendor.address)
+            - getLocationMatchScore(projectLocation, left.vendor.address)
+            || left.index - right.index;
+        }
+        if (vendorSort === "status") {
+          return Number(left.vendor.status === "inactive") - Number(right.vendor.status === "inactive")
+            || left.vendor.name.localeCompare(right.vendor.name, "vi");
+        }
+        return left.vendor.name.localeCompare(right.vendor.name, "vi");
+      })
+      .map(({ vendor }) => vendor);
+  }, [activeProject?.locationText, vendorSearch, vendorSort, vendors]);
 
   const projectVendorChoices = useMemo(
     () => projectVendors
@@ -1102,6 +1137,33 @@ const OrganizerProjects = () => {
     void loadProjectContext(selectedProjectId);
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const requestId = searchParams.get("requestId");
+    const assignmentId = searchParams.get("assignmentId");
+    const shouldOpen = searchParams.get("assignments") === "open" || requestId || assignmentId;
+    if (!shouldOpen || loading) return;
+    if (requestId && !requestAssignments.some((request) => request.id === requestId)) return;
+    if (assignmentId && !projects.some((project) => project.id === assignmentId)) return;
+
+    setAssignmentRequestsOpen(true);
+    window.setTimeout(() => {
+      const targetId = requestId
+        ? `request-assignment-${requestId}`
+        : assignmentId
+          ? `project-assignment-${assignmentId}`
+          : "assignment-requests-content";
+      document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("requestId");
+      next.delete("assignmentId");
+      next.delete("assignments");
+      return next;
+    }, { replace: true });
+  }, [loading, projects, requestAssignments, searchParams, setSearchParams]);
+
   // Real-time: auto-refresh khi admin phân công hoặc cập nhật dự án
   const refreshRef = useRef<() => Promise<void>>();
   refreshRef.current = async () => {
@@ -1115,6 +1177,7 @@ const OrganizerProjects = () => {
     const ASSIGNMENT_TYPES = new Set([
       "request",
       "project",
+      "project_assignment",
       "request_assignment_accepted",
       "request_assignment_rejected",
       "project_assignment_accepted",
@@ -1243,13 +1306,12 @@ const OrganizerProjects = () => {
           return;
         }
 
-        await Promise.all(
-          selectedTaskTemplates.map((template, index) => {
-            const taskForm = selectedTaskTemplates.length === 1
-              ? form
-              : buildTaskFormFromTemplate(template, form.assigneeUserId);
+        for (const [index, template] of selectedTaskTemplates.entries()) {
+          const taskForm = selectedTaskTemplates.length === 1
+            ? form
+            : buildTaskFormFromTemplate(template, form.assigneeUserId);
 
-            return apiClient.post("/organizer/tasks", {
+          await apiClient.post("/organizer/tasks", {
               title: taskForm.title.trim(),
               description: taskForm.description.trim() || undefined,
               assigneeUserId: taskForm.assigneeUserId || null,
@@ -1258,9 +1320,8 @@ const OrganizerProjects = () => {
               eventId: selectedProjectId,
               status: targetStatus,
               sortOrder: index,
-            });
-          }),
-        );
+          });
+        }
 
         toast.success(`Đã thêm ${selectedTaskTemplates.length} công việc`);
         setDialogOpen(false);
@@ -1303,13 +1364,47 @@ const OrganizerProjects = () => {
   };
 
   const moveTask = async (task: KanbanTask, toStatus: string) => {
+    if (task.status === toStatus || movingTaskId === task.id) return;
+
+    const allowedStatuses = allowedTaskMoves[task.status] ?? [];
+    if (!allowedStatuses.includes(toStatus)) {
+      toast.error("Không thể chuyển công việc sang trạng thái này");
+      return;
+    }
+
+    const previousKanban = kanban;
+    setMovingTaskId(task.id);
+    setKanban((current) => {
+      if (!current) return current;
+      const movedTask = { ...task, status: toStatus };
+      return {
+        ...current,
+        columns: current.columns.map((column) => ({
+          ...column,
+          tasks: column.id === toStatus
+            ? [...column.tasks.filter((item) => item.id !== task.id), movedTask]
+            : column.tasks.filter((item) => item.id !== task.id),
+        })),
+      };
+    });
+
     try {
       await apiClient.patch(`/organizer/tasks/${task.id}/status`, { status: toStatus });
       toast.success("Đã chuyển công việc");
       await refresh();
     } catch (err) {
+      setKanban(previousKanban);
       toast.error(err instanceof Error ? err.message : "Không thể chuyển công việc");
+    } finally {
+      setMovingTaskId(null);
     }
+  };
+
+  const handleTaskDrop = (toStatus: string) => {
+    const task = allTasks.find((item) => item.id === draggedTaskId);
+    setDraggedTaskId(null);
+    setDragOverStatus(null);
+    if (task) void moveTask(task, toStatus);
   };
 
   const deleteTask = async (taskId: string) => {
@@ -1722,6 +1817,7 @@ const OrganizerProjects = () => {
             {pendingRequestAssignments.map((request) => (
               <div
                 key={request.id}
+                id={`request-assignment-${request.id}`}
                 className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-ambient"
               >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1770,6 +1866,7 @@ const OrganizerProjects = () => {
             {pendingProjectAssignments.map((project) => (
               <div
                 key={project.id}
+                id={`project-assignment-${project.id}`}
                 className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-ambient"
               >
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2215,8 +2312,33 @@ const OrganizerProjects = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-4">
-                {allColumns.map((column) => (
-                  <div key={column.id} className="bg-surface-low rounded-xl p-4 min-w-0">
+                {allColumns.map((column) => {
+                  const draggedTask = allTasks.find((task) => task.id === draggedTaskId);
+                  const canDrop = !!draggedTask && (allowedTaskMoves[draggedTask.status] ?? []).includes(column.id);
+                  const isDragTarget = dragOverStatus === column.id && canDrop;
+
+                  return (
+                  <div
+                    key={column.id}
+                    onDragOver={(event) => {
+                      if (!canDrop) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverStatus(column.id);
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setDragOverStatus((current) => current === column.id ? null : current);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (canDrop) handleTaskDrop(column.id);
+                    }}
+                    className={`bg-surface-low rounded-xl p-4 min-w-0 border-2 transition-colors ${
+                      isDragTarget ? "border-primary bg-primary/5" : "border-transparent"
+                    }`}
+                  >
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <h3 className="font-serif font-semibold text-foreground text-sm">{column.title}</h3>
@@ -2233,18 +2355,37 @@ const OrganizerProjects = () => {
                       </button>
                     </div>
 
-                    <div className="space-y-3 min-h-[120px]">
+                    <div className={`space-y-3 min-h-[120px] rounded-lg transition-colors ${isDragTarget ? "bg-primary/5" : ""}`}>
                       <AnimatePresence>
                         {column.tasks.map((task) => (
                           <motion.div
                             key={task.id}
+                            draggable={(allowedTaskMoves[task.status] ?? []).length > 0 && movingTaskId !== task.id}
+                            onDragStart={(event) => {
+                              setDraggedTaskId(task.id);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", task.id);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedTaskId(null);
+                              setDragOverStatus(null);
+                            }}
                             layout
                             initial={{ opacity: 0, scale: 0.96 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.96 }}
-                            className="bg-surface-lowest rounded-xl p-4 shadow-ambient group"
+                            className={`bg-surface-lowest rounded-xl p-4 shadow-ambient group transition-opacity ${
+                              draggedTaskId === task.id ? "opacity-40" : ""
+                            } ${movingTaskId === task.id ? "pointer-events-none opacity-60" : ""}`}
                           >
                             <div className="flex items-start justify-between gap-2">
+                              {(allowedTaskMoves[task.status] ?? []).length > 0 && (
+                                <GripVertical
+                                  size={16}
+                                  className="mt-0.5 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing"
+                                  aria-label="Kéo để đổi trạng thái"
+                                />
+                              )}
                               <div className="min-w-0">
                                 <p className="font-body text-sm font-semibold text-foreground break-words">{task.title}</p>
                                 <div className="flex flex-wrap gap-2 mt-2 text-xs font-body">
@@ -2294,7 +2435,8 @@ const OrganizerProjects = () => {
                       </AnimatePresence>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2751,20 +2893,39 @@ const OrganizerProjects = () => {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={vendorSearch}
-              onChange={(event) => setVendorSearch(event.target.value)}
-              placeholder="Tìm theo tên, danh mục, liên hệ hoặc địa chỉ..."
-              className="pl-9 rounded-xl border-none bg-surface-low"
-            />
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_190px]">
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={vendorSearch}
+                onChange={(event) => setVendorSearch(event.target.value)}
+                placeholder="Tìm theo tên, danh mục, liên hệ hoặc địa chỉ..."
+                className="pl-9 rounded-xl border-none bg-surface-low"
+              />
+            </div>
+            <select
+              value={vendorSort}
+              onChange={(event) => setVendorSort(event.target.value as VendorSort)}
+              aria-label="Sắp xếp nhà cung cấp"
+              className="h-10 rounded-xl border-none bg-surface-low px-3 font-body text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="location">Phù hợp địa chỉ</option>
+              <option value="name">Tên A–Z</option>
+              <option value="status">Khả dụng trước</option>
+            </select>
           </div>
+
+          {vendorSort === "location" && (
+            <p className="font-body text-xs text-muted-foreground">
+              Ưu tiên NCC có địa chỉ phù hợp với dự án: {activeProject?.locationText || "chưa có địa điểm"}.
+            </p>
+          )}
 
           <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
             {filteredVendorCatalog.map((vendor) => {
               const assigned = projectVendors.some((assignment) => assignment.vendorId === vendor.id);
               const inactive = vendor.status === "inactive";
+              const locationMatchScore = getLocationMatchScore(activeProject?.locationText, vendor.address);
 
               return (
                 <div
@@ -2781,6 +2942,11 @@ const OrganizerProjects = () => {
                       }`}>
                         {vendorStatusLabel[vendor.status ?? "active"] ?? vendor.status}
                       </span>
+                      {locationMatchScore > 0 && (
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 font-body text-[11px] font-semibold text-primary">
+                          Phù hợp khu vực
+                        </span>
+                      )}
                     </div>
                     <p className="mt-1 font-body text-xs text-muted-foreground">
                       {vendor.category?.name ?? "Chưa phân loại"} · {vendor.contactName || vendor.phone || vendor.email || "Chưa có liên hệ"}

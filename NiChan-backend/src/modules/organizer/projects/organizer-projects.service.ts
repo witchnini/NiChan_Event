@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../../lib/prisma";
-import { emitNotification } from "../../../lib/socket";
+import { emitNotification, emitToRole } from "../../../lib/socket";
 import { createError } from "../../../middleware/errorHandler";
 import {
   emitCustomerNotification,
@@ -702,6 +702,19 @@ export const updateProjectStatus = async (
       }),
     );
     emitCustomerNotification(result.notification);
+    if (event.consultationRequestId) {
+      const requestStatusByProjectStatus = {
+        quoted: "quoted",
+        contracted: "confirmed",
+        planning: "planning",
+        in_progress: "in_progress",
+        completed: "completed",
+      } as const;
+      emitToRole("admin", "consultation_request_updated", {
+        requestId: event.consultationRequestId,
+        status: requestStatusByProjectStatus[nextStatus],
+      });
+    }
     return result.event;
   }
 
@@ -773,10 +786,51 @@ export const updateProjectStatus = async (
   });
 
   if (result.notification) emitCustomerNotification(result.notification);
+  if (event.consultationRequestId) {
+    emitToRole("admin", "consultation_request_updated", {
+      requestId: event.consultationRequestId,
+      status: "cancelled",
+    });
+  }
   return result.updatedEvent;
 };
 
 // ─── Tasks CRUD ───────────────────────────────────────────────────────────────
+
+const ensureKanbanAssigneeIsProjectStaff = async (
+  tx: Prisma.TransactionClient,
+  eventId: string,
+  assigneeUserId: string | null | undefined,
+  taskTitle: string,
+) => {
+  if (!assigneeUserId) return;
+
+  const staff = await tx.user.findFirst({
+    where: {
+      id: assigneeUserId,
+      role: "staff",
+      status: "active",
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  if (!staff) return;
+
+  const existing = await tx.eventStaffAssignment.findFirst({
+    where: { eventId, staffUserId: assigneeUserId },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  await tx.eventStaffAssignment.create({
+    data: {
+      eventId,
+      staffUserId: assigneeUserId,
+      roleText: `Phụ trách Kanban: ${taskTitle}`.slice(0, 255),
+      status: "invited",
+    },
+  });
+};
 
 export const createTask = async (
   input: CreateTaskInput,
@@ -814,6 +868,13 @@ export const createTask = async (
         assignee: { select: { id: true, displayName: true, avatarUrl: true } },
       },
     });
+
+    await ensureKanbanAssigneeIsProjectStaff(
+      tx,
+      input.eventId,
+      task.assigneeUserId,
+      task.title,
+    );
 
     await recalculateProjectProgress(tx, input.eventId);
     const notification = await tx.notification.create({
@@ -883,17 +944,27 @@ export const updateTask = async (
   const existing = await getTaskForOrganizer(taskId, organizerUserId);
   if (!existing) throw createError("NOT_FOUND", "Task not found", 404);
 
-  const updated = await prisma.projectTask.update({
-    where: { id: taskId },
-    data: {
-      ...(data.title !== undefined ? { title: data.title } : {}),
-      ...(data.description !== undefined ? { description: data.description } : {}),
-      ...(data.priority !== undefined ? { priority: data.priority } : {}),
-      ...(data.assigneeUserId !== undefined ? { assigneeUserId: data.assigneeUserId } : {}),
-      ...(data.dueAt !== undefined ? { dueAt: data.dueAt ? new Date(data.dueAt) : null } : {}),
-      ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
-    },
-    include: { assignee: { select: { id: true, displayName: true, avatarUrl: true } } },
+  const updated = await prisma.$transaction(async (tx) => {
+    const task = await tx.projectTask.update({
+      where: { id: taskId },
+      data: {
+        ...(data.title !== undefined ? { title: data.title } : {}),
+        ...(data.description !== undefined ? { description: data.description } : {}),
+        ...(data.priority !== undefined ? { priority: data.priority } : {}),
+        ...(data.assigneeUserId !== undefined ? { assigneeUserId: data.assigneeUserId } : {}),
+        ...(data.dueAt !== undefined ? { dueAt: data.dueAt ? new Date(data.dueAt) : null } : {}),
+        ...(data.sortOrder !== undefined ? { sortOrder: data.sortOrder } : {}),
+      },
+      include: { assignee: { select: { id: true, displayName: true, avatarUrl: true } } },
+    });
+
+    await ensureKanbanAssigneeIsProjectStaff(
+      tx,
+      existing.eventId,
+      task.assigneeUserId,
+      task.title,
+    );
+    return task;
   });
 
   await notifyCustomerForEvent(existing.eventId, {

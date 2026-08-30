@@ -43,7 +43,7 @@ model User {
   staffAssignments  EventStaffAssignment[]
   shifts            ShiftSchedule[]
   createdContracts    Contract[]            @relation("ContractCreator")
-  customerContracts  Contract[]            @relation("ContractCustomer")
+  customerContracts  Contract[]            @relation("CòntractCustomer")
   uploadedDocuments  Document[]
   approvedReviews    Review[]              @relation("ReviewApprover")
   customerReviews    Review[]              @relation("CustomerReview")

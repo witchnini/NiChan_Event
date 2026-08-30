@@ -886,7 +886,10 @@ const EventTracking = () => {
                               </span>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              <Link to={`/dashboard/hop-dong/${sentContract.id}`}>
+                              <Link
+                                to={`/dashboard/hop-dong/${sentContract.id}`}
+                                state={{ returnTo: `/dashboard/su-kien/${id}?tab=timeline` }}
+                              >
                                 <Button variant="outline" size="sm" className="rounded-lg">
                                   <Eye size={14} className="mr-1" /> Xem hợp đồng
                                 </Button>

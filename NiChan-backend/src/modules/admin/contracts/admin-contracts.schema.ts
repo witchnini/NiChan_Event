@@ -50,6 +50,7 @@ const reviseSettlementLineItemSchema = contractLineItemSchema.extend({
 export const reviseSettlementSchema = z.object({
   lineItems: z.array(reviseSettlementLineItemSchema).min(1),
   scopeText: z.string().min(1).optional(),
+  paymentTerms: z.string().min(1).optional(),
   generalTerms: z.string().min(1).optional(),
 });
 

@@ -40,6 +40,9 @@ export const initSocket = (httpServer: HttpServer): SocketServer => {
 
   io.on("connection", (socket: Socket) => {
     const userId = socket.data.userId as string;
+    const role = socket.data.role as string;
+
+    if (role) socket.join(`role:${role}`);
 
     // Track online users
     if (!onlineUsers.has(userId)) {
@@ -126,6 +129,11 @@ export const emitNotification = (
   for (const socketId of sockets) {
     io.to(socketId).emit("notification", notification);
   }
+};
+
+export const emitToRole = (role: string, event: string, payload: unknown) => {
+  if (!io) return;
+  io.to(`role:${role}`).emit(event, payload);
 };
 
 export const getIO = (): SocketServer => {

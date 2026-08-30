@@ -26,12 +26,14 @@ const categoryColors: Record<string, string> = {
   budget: "bg-destructive/10 text-destructive",
   staff: "bg-accent/20 text-accent-foreground",
   project: "bg-muted text-muted-foreground",
+  project_assignment: "bg-primary/10 text-primary",
 };
 
 // Nhãn tiếng Việt cho từng loại thông báo. Loại lạ sẽ hiển thị nguyên giá trị.
 const typeLabels: Record<string, string> = {
   request: "Yêu cầu",
   project: "Dự án",
+  project_assignment: "Phân công dự án",
   task: "Công việc",
   vendor: "Nhà cung cấp",
   budget: "Ngân sách",

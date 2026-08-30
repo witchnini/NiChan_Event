@@ -39,12 +39,20 @@ const ContractView = () => {
   const { create: createPayment, loading: paymentLoading } = useCreatePayment();
 
   const isPortalView = location.pathname.startsWith("/admin") || location.pathname.startsWith("/ban-to-chuc");
+  const returnTo = (location.state as { returnTo?: unknown } | null)?.returnTo;
+  const customerReturnPath =
+    typeof returnTo === "string" && returnTo.startsWith("/dashboard/su-kien/")
+      ? returnTo
+      : "/dashboard/hop-dong";
   const backPath =
     user?.role === "admin"
       ? "/admin/hop-dong"
       : user?.role === "organizer"
         ? "/ban-to-chuc/du-an"
-        : "/dashboard/hop-dong";
+        : customerReturnPath;
+  const backLabel = user?.role === "customer" && customerReturnPath.includes("tab=timeline")
+    ? "Quay lại tiến độ"
+    : "Quay lại hợp đồng";
 
   useEffect(() => {
     const load = async () => {
@@ -135,7 +143,7 @@ const ContractView = () => {
       <div className={isPortalView ? "mx-auto max-w-[980px]" : "container mx-auto px-6"}>
         <div className="flex items-center justify-between mb-6 max-w-[820px] mx-auto">
           <Link to={backPath} className="flex items-center gap-2 text-muted-foreground font-body text-sm hover:text-primary transition-colors">
-            <ArrowLeft size={16} /> Quay lại hợp đồng
+            <ArrowLeft size={16} /> {backLabel}
           </Link>
           <div className="flex items-center gap-2">
             {canPay && (

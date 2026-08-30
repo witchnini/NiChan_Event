@@ -3,6 +3,8 @@ import { motion } from "framer-motion";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   DollarSign,
   Edit2,
   FileSignature,
@@ -142,13 +144,10 @@ const money = (value: string | number) => `${Number(value || 0).toLocaleString("
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString("vi-VN") : "-";
 
-const formatDateTime = (value: string) =>
-  new Date(value).toLocaleString("vi-VN", {
+const formatTime = (value: string) =>
+  new Date(value).toLocaleTimeString("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
   });
 
 const getDisplayName = (event?: EventRef | null) =>
@@ -166,10 +165,35 @@ const txStatusLabel: Record<string, string> = {
   cancelled: "Đã hủy",
 };
 
-const txStatusColors: Record<string, string> = {
-  completed: "bg-secondary/10 text-secondary",
-  pending: "bg-primary/10 text-primary",
-  cancelled: "bg-destructive/10 text-destructive",
+const txStatusStyles: Record<string, { badge: string; dot: string }> = {
+  completed: {
+    badge: "border-secondary/20 bg-secondary/10 text-secondary",
+    dot: "bg-secondary",
+  },
+  pending: {
+    badge: "border-primary/20 bg-primary/10 text-primary",
+    dot: "bg-primary",
+  },
+  cancelled: {
+    badge: "border-destructive/20 bg-destructive/10 text-destructive",
+    dot: "bg-destructive",
+  },
+};
+
+const TransactionStatusBadge = ({ status }: { status: string }) => {
+  const style = txStatusStyles[status] ?? {
+    badge: "border-border bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-body font-semibold leading-none ${style.badge}`}
+    >
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
+      {txStatusLabel[status] ?? status}
+    </span>
+  );
 };
 
 const contractStatusLabel: Record<string, string> = {
@@ -288,6 +312,10 @@ const AdminFinance = () => {
   const [txEventFilter, setTxEventFilter] = useState("all");
   const [txContractFilter, setTxContractFilter] = useState("all");
   const [txLoading, setTxLoading] = useState(true);
+  const [txPage, setTxPage] = useState(1);
+  const [txTotal, setTxTotal] = useState(0);
+  const [txTotalPages, setTxTotalPages] = useState(1);
+  const txPageSize = 10;
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -319,14 +347,20 @@ const AdminFinance = () => {
   const loadTransactions = async () => {
     setTxLoading(true);
     try {
-      const data = await apiClient.get<Transaction[]>("/admin/transactions", {
+      const response = await apiClient.getPaginated<Transaction[]>("/admin/transactions", {
         search: txSearch.trim() || undefined,
         eventId: txEventFilter === "all" ? undefined : txEventFilter,
         contractId: txContractFilter === "all" ? undefined : txContractFilter,
         status: txFilter === "all" ? undefined : txFilter,
-        pageSize: 100,
+        page: txPage,
+        pageSize: txPageSize,
       });
-      setTransactions(data);
+      setTransactions(response.data);
+      setTxTotal(response.meta?.total ?? response.data.length);
+      setTxTotalPages(Math.max(1, response.meta?.totalPages ?? 1));
+      if (response.meta && txPage > Math.max(1, response.meta.totalPages)) {
+        setTxPage(Math.max(1, response.meta.totalPages));
+      }
     } catch {
       toast.error("Không tải được danh sách giao dịch");
     } finally {
@@ -343,7 +377,7 @@ const AdminFinance = () => {
       void loadTransactions();
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [txFilter, txSearch, txEventFilter, txContractFilter]);
+  }, [txFilter, txSearch, txEventFilter, txContractFilter, txPage]);
 
   const loadProjects = async () => {
     if (projects.length) return;
@@ -599,12 +633,19 @@ const AdminFinance = () => {
   };
 
   const changeEventFilter = (eventId: string) => {
+    setTxPage(1);
     setTxEventFilter(eventId);
     const selectedContract = contracts.find((contract) => contract.id === txContractFilter);
     if (eventId !== "all" && selectedContract?.event?.id !== eventId) {
       setTxContractFilter("all");
     }
   };
+
+  const txPageNumbers = useMemo(() => {
+    const start = Math.max(1, Math.min(txPage - 2, txTotalPages - 4));
+    const end = Math.min(txTotalPages, start + 4);
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  }, [txPage, txTotalPages]);
 
   const renderTxForm = () => (
     <div className="space-y-4">
@@ -864,7 +905,7 @@ const AdminFinance = () => {
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-6">
           <div>
             <h3 className="font-serif text-headline-md text-foreground">Giao dịch</h3>
-            <p className="font-body text-sm text-muted-foreground">{txLoading ? "Đang tải..." : `${transactions.length} giao dịch`}</p>
+            <p className="font-body text-sm text-muted-foreground">{txLoading ? "Đang tải..." : `${txTotal} giao dịch`}</p>
           </div>
           <Button variant="hero" size="sm" onClick={openCreate}><Plus size={16} /> Tạo giao dịch</Button>
         </div>
@@ -874,7 +915,10 @@ const AdminFinance = () => {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={txSearch}
-              onChange={(event) => setTxSearch(event.target.value)}
+              onChange={(event) => {
+                setTxSearch(event.target.value);
+                setTxPage(1);
+              }}
               placeholder="Tìm mô tả, dự án, số HĐ..."
               className="pl-10 rounded-xl bg-surface-low font-body border-none"
             />
@@ -888,7 +932,10 @@ const AdminFinance = () => {
               ))}
             </SelectContent>
           </Select>
-          <Select value={txContractFilter} onValueChange={setTxContractFilter}>
+          <Select value={txContractFilter} onValueChange={(value) => {
+            setTxContractFilter(value);
+            setTxPage(1);
+          }}>
             <SelectTrigger className="rounded-xl bg-surface-low border-none xl:w-56"><SelectValue placeholder="Tất cả HĐ" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tất cả hợp đồng</SelectItem>
@@ -903,7 +950,10 @@ const AdminFinance = () => {
           {[{ label: "Tất cả", value: "all" }, ...txStatusList].map((status) => (
             <button
               key={status.value}
-              onClick={() => setTxFilter(status.value)}
+              onClick={() => {
+                setTxFilter(status.value);
+                setTxPage(1);
+              }}
               className={`px-3 py-2 rounded-xl font-body text-sm transition-all ${txFilter === status.value ? "gradient-primary text-primary-foreground" : "bg-surface-low text-muted-foreground hover:text-foreground"}`}
             >
               {status.label}
@@ -912,17 +962,17 @@ const AdminFinance = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <Table className="min-w-[980px]">
-            <TableHeader>
+          <Table className="min-w-[1180px] table-fixed">
+            <TableHeader className="[&_th]:font-semibold [&_th]:text-foreground/70">
               <TableRow className="bg-surface-low">
-                <TableHead>Mô tả</TableHead>
-                <TableHead>Dự án</TableHead>
-                <TableHead>Hợp đồng</TableHead>
-                <TableHead>Ngày</TableHead>
-                <TableHead>Hình thức</TableHead>
-                <TableHead className="text-right">Số tiền</TableHead>
-                <TableHead>Trạng thái</TableHead>
-                <TableHead />
+                <TableHead className="w-[300px]">Mô tả</TableHead>
+                <TableHead className="w-[170px]">Dự án</TableHead>
+                <TableHead className="w-[125px]">Hợp đồng</TableHead>
+                <TableHead className="w-[120px]">Ngày</TableHead>
+                <TableHead className="w-[130px]">Hình thức</TableHead>
+                <TableHead className="w-[150px] text-right">Số tiền</TableHead>
+                <TableHead className="w-[135px]">Trạng thái</TableHead>
+                <TableHead className="w-[80px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -939,20 +989,25 @@ const AdminFinance = () => {
               {!txLoading && transactions.map((transaction) => (
                 <TableRow key={transaction.id} className="hover:bg-surface-low/50">
                   <TableCell className="font-body text-sm font-semibold text-foreground">
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <ReceiptText size={14} className="text-primary shrink-0" />
-                      <span className="line-clamp-1">{transaction.description}</span>
+                      <span className="truncate" title={transaction.description}>{transaction.description}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="font-body text-sm text-foreground">{getDisplayName(transaction.event)}</TableCell>
-                  <TableCell className="font-body text-sm text-primary font-semibold">{transaction.contract?.contractCode ?? "-"}</TableCell>
-                  <TableCell className="font-body text-sm text-foreground">{formatDateTime(transaction.transactionDate)}</TableCell>
-                  <TableCell className="font-body text-sm text-muted-foreground">{transaction.paymentMethod ?? "-"}</TableCell>
-                  <TableCell className="font-body text-sm font-semibold text-foreground text-right">{money(transaction.amount)}</TableCell>
-                  <TableCell>
-                    <span className={`px-3 py-1 rounded-full text-xs font-body font-semibold ${txStatusColors[transaction.status] ?? "bg-muted text-muted-foreground"}`}>
-                      {txStatusLabel[transaction.status] ?? transaction.status}
-                    </span>
+                  <TableCell className="font-body text-sm text-foreground">
+                    <span className="line-clamp-2 leading-5" title={getDisplayName(transaction.event)}>{getDisplayName(transaction.event)}</span>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap font-body text-sm font-semibold text-primary">{transaction.contract?.contractCode ?? "-"}</TableCell>
+                  <TableCell className="whitespace-nowrap font-body text-sm text-foreground">
+                    <span className="block font-medium">{formatDate(transaction.transactionDate)}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{formatTime(transaction.transactionDate)}</span>
+                  </TableCell>
+                  <TableCell className="font-body text-sm text-muted-foreground">
+                    <span className="line-clamp-2">{transaction.paymentMethod ?? "-"}</span>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-right font-body text-sm font-semibold tabular-nums text-foreground">{money(transaction.amount)}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <TransactionStatusBadge status={transaction.status} />
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-end">
@@ -983,6 +1038,52 @@ const AdminFinance = () => {
             </TableBody>
           </Table>
         </div>
+
+        {!txLoading && txTotal > 0 && (
+          <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="font-body text-sm text-muted-foreground">
+              Hiển thị <span className="font-semibold text-foreground">{(txPage - 1) * txPageSize + 1}–{Math.min(txPage * txPageSize, txTotal)}</span> trong {txTotal} giao dịch
+            </p>
+            <nav className="flex items-center gap-1" aria-label="Phân trang giao dịch">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                disabled={txPage === 1}
+                onClick={() => setTxPage((page) => Math.max(1, page - 1))}
+                aria-label="Trang trước"
+              >
+                <ChevronLeft size={16} />
+              </Button>
+              {txPageNumbers.map((page) => (
+                <Button
+                  key={page}
+                  type="button"
+                  variant={page === txPage ? "default" : "ghost"}
+                  size="icon"
+                  className="h-9 w-9 font-body text-sm"
+                  onClick={() => setTxPage(page)}
+                  aria-label={`Trang ${page}`}
+                  aria-current={page === txPage ? "page" : undefined}
+                >
+                  {page}
+                </Button>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                disabled={txPage === txTotalPages}
+                onClick={() => setTxPage((page) => Math.min(txTotalPages, page + 1))}
+                aria-label="Trang sau"
+              >
+                <ChevronRight size={16} />
+              </Button>
+            </nav>
+          </div>
+        )}
       </motion.div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-surface-lowest rounded-xl p-6 shadow-ambient">

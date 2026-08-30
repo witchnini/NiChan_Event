@@ -399,8 +399,16 @@ const OrganizerBudget = () => {
               <div><label className="font-body text-sm mb-1 block">Tên hạng mục mới</label><Input value={form.customCategory} onChange={e => setForm({ ...form, customCategory: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
             )}
             <div className="grid grid-cols-2 gap-4">
-              <div><label className="font-body text-sm mb-1 block">Dự toán (VND)</label><Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
-              <div><label className="font-body text-sm mb-1 block">Thực tế (VND)</label><Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low" /></div>
+              <div>
+                <label className="font-body text-sm mb-1 block">Dự toán (VND)</label>
+                <Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.estimated} onChange={e => setForm({ ...form, estimated: e.target.value })} className="rounded-xl border-none bg-surface-low text-right text-base font-semibold tabular-nums" />
+                {form.estimated && <p className="mt-1 text-right text-xs text-muted-foreground tabular-nums">{formatCurrency(form.estimated)}</p>}
+              </div>
+              <div>
+                <label className="font-body text-sm mb-1 block">Thực tế (VND)</label>
+                <Input type="number" min="0" step="1000" inputMode="numeric" placeholder="VD: 1700000" value={form.actual} onChange={e => setForm({ ...form, actual: e.target.value })} className="rounded-xl border-none bg-surface-low text-right text-base font-semibold tabular-nums" />
+                {form.actual && <p className="mt-1 text-right text-xs text-muted-foreground tabular-nums">{formatCurrency(form.actual)}</p>}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><label className="font-body text-sm mb-1 block">Trạng thái</label>

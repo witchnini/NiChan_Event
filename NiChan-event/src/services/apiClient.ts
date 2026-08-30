@@ -38,12 +38,12 @@ function getToken(): string | null {
   return localStorage.getItem("nichan_token");
 }
 
-async function request<T>(
+async function requestResponse<T>(
   method: string,
   path: string,
   body?: unknown,
   params?: Record<string, string | number | boolean | undefined>,
-): Promise<T> {
+): Promise<ApiResponse<T>> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -73,7 +73,17 @@ async function request<T>(
     throw new ApiException(err.code ?? "UNKNOWN", err.message ?? "Request failed", res.status, err.details);
   }
 
-  return json.data as T;
+  return json as ApiResponse<T>;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  params?: Record<string, string | number | boolean | undefined>,
+): Promise<T> {
+  const response = await requestResponse<T>(method, path, body, params);
+  return response.data;
 }
 
 async function uploadRequest<T>(path: string, form: FormData): Promise<T> {
@@ -97,6 +107,8 @@ async function uploadRequest<T>(path: string, form: FormData): Promise<T> {
 export const apiClient = {
   get: <T>(path: string, params?: Record<string, string | number | boolean | undefined>) =>
     request<T>("GET", path, undefined, params),
+  getPaginated: <T>(path: string, params?: Record<string, string | number | boolean | undefined>) =>
+    requestResponse<T>("GET", path, undefined, params),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),

@@ -258,6 +258,14 @@ const hasSettlementVersion = (
   contract?: Pick<Contract, "versions"> | null,
 ) => Boolean(contract?.versions?.some((version) => version.purpose === "settlement"));
 
+const latestOriginalVersion = (
+  contract?: Pick<Contract, "versions"> | null,
+) => contract?.versions?.find((version) => (version.purpose ?? "original") === "original");
+
+const latestSettlementVersion = (
+  contract?: Pick<Contract, "versions"> | null,
+) => contract?.versions?.find((version) => version.purpose === "settlement");
+
 const unitOptions = [
   "gói",
   "buổi",
@@ -1530,9 +1538,10 @@ const AdminContracts = () => {
   const openEdit = async (contract: Contract) => {
     try {
       const detail = await apiClient.get<Contract>(`/admin/contracts/${contract.id}`);
-      const latest = detail.versions?.[0];
+      const latest = latestSettlementVersion(detail) ?? latestOriginalVersion(detail);
       const lineItems = latest?.lineItems?.length
         ? latest.lineItems.map((item) => ({
+            sourceLineItemId: item.id,
             category: item.category ?? "",
             description: item.description ?? "",
             unit: item.unit ?? "gói",
@@ -1549,7 +1558,7 @@ const AdminContracts = () => {
       setForm({
         eventId: detail.event?.id ?? "",
         customerUserId: detail.customerUser?.id ?? "",
-        versionLabel: detail.currentVersion ?? "1.0",
+        versionLabel: latest?.versionLabel ?? "1.0",
         totalValue: String(detail.totalValue ?? ""),
         scopeText: latest?.scopeText ?? "",
         paymentTerms: latest?.paymentTerms ?? "",
@@ -1571,15 +1580,32 @@ const AdminContracts = () => {
 
     setSaving(true);
     try {
-      await apiClient.put(`/admin/contracts/${editItem.id}`, {
-        totalValue: quoteTotal,
-        versionLabel: form.versionLabel,
-        scopeText: form.scopeText,
-        paymentTerms: form.paymentTerms,
-        generalTerms: form.generalTerms,
-        lineItems: normalizedLineItems(),
-      });
-      toast.success("Đã cập nhật hợp đồng");
+      const editsSettlement = hasSettlementVersion(editItem);
+      const lineItems = normalizedLineItems().map((item, index) => ({
+        ...item,
+        ...(form.lineItems[index]?.sourceLineItemId
+          ? { sourceLineItemId: form.lineItems[index].sourceLineItemId }
+          : {}),
+      }));
+
+      if (editsSettlement) {
+        await apiClient.patch(`/admin/contracts/${editItem.id}/settlement`, {
+          scopeText: form.scopeText,
+          paymentTerms: form.paymentTerms,
+          generalTerms: form.generalTerms,
+          lineItems,
+        });
+      } else {
+        await apiClient.put(`/admin/contracts/${editItem.id}`, {
+          totalValue: quoteTotal,
+          versionLabel: form.versionLabel,
+          scopeText: form.scopeText,
+          paymentTerms: form.paymentTerms,
+          generalTerms: form.generalTerms,
+          lineItems,
+        });
+      }
+      toast.success(editsSettlement ? "Đã cập nhật biên bản quyết toán" : "Đã cập nhật hợp đồng");
       setEditItem(null);
       await loadContracts();
     } catch (error) {
@@ -2413,8 +2439,8 @@ const AdminContracts = () => {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}`)}>
-                          <Eye size={12} className="mr-2" /> Xem bản đầy đủ
+                        <DropdownMenuItem onClick={() => navigate(`/admin/hop-dong/${contract.id}?view=original`)}>
+                          <Eye size={12} className="mr-2" /> Xem hợp đồng gốc
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => openView(contract)}>
                           <FileText size={12} className="mr-2" /> Xem nhanh
@@ -2501,7 +2527,10 @@ const AdminContracts = () => {
       <Dialog open={!!editItem} onOpenChange={() => setEditItem(null)}>
         <DialogContent className="max-h-[92vh] w-[95vw] overflow-y-auto sm:max-w-[1280px] xl:max-w-[1440px]">
           <DialogHeader>
-            <DialogTitle className="font-serif">Chỉnh sửa hợp đồng {editItem?.contractCode}</DialogTitle>
+            <DialogTitle className="font-serif">
+              {hasSettlementVersion(editItem) ? "Chỉnh sửa biên bản quyết toán" : "Chỉnh sửa hợp đồng"}{" "}
+              {editItem?.contractCode}
+            </DialogTitle>
           </DialogHeader>
           {renderContractForm("edit")}
           <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background/95 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -2613,15 +2642,15 @@ const AdminContracts = () => {
                 <div className="space-y-3 border-t border-border pt-3">
                   <div>
                     <p className="mb-1 text-muted-foreground">Phạm vi công việc</p>
-                    <p className="whitespace-pre-wrap text-foreground">{viewItem.versions[0].scopeText || "-"}</p>
+                    <p className="whitespace-pre-wrap text-foreground">{latestOriginalVersion(viewItem)?.scopeText || "-"}</p>
                   </div>
                   <div>
                     <p className="mb-1 text-muted-foreground">Điều khoản thanh toán</p>
-                    <p className="whitespace-pre-wrap text-foreground">{viewItem.versions[0].paymentTerms || "-"}</p>
+                    <p className="whitespace-pre-wrap text-foreground">{latestOriginalVersion(viewItem)?.paymentTerms || "-"}</p>
                   </div>
                   <div>
                     <p className="mb-1 text-muted-foreground">Điều khoản chung</p>
-                    <p className="whitespace-pre-wrap text-foreground">{viewItem.versions[0].generalTerms || "-"}</p>
+                    <p className="whitespace-pre-wrap text-foreground">{latestOriginalVersion(viewItem)?.generalTerms || "-"}</p>
                   </div>
                 </div>
               )}

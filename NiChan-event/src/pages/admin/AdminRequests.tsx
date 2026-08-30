@@ -8,7 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { ApiException, apiClient } from "@/services/apiClient";
+import { getSocket } from "@/services/socket";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 import {
   organizerAssignmentColors,
   organizerAssignmentLabels,
@@ -104,6 +106,7 @@ const NoteContent = ({ note }: { note: string }) => {
 };
 
 const AdminRequests = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [requests, setRequests] = useState<RequestItem[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
   const [search, setSearch] = useState("");
@@ -134,9 +137,54 @@ const AdminRequests = () => {
   }, [search, filterStatus]);
 
   useEffect(() => {
+    const requestId = searchParams.get("requestId");
+    if (!requestId || loading) return;
+
+    const request = requests.find((item) => item.id === requestId);
+    if (request) {
+      setViewItem(request);
+    } else {
+      toast.error("Không tìm thấy yêu cầu được liên kết với thông báo");
+    }
+
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("requestId");
+      return next;
+    }, { replace: true });
+  }, [loading, requests, searchParams, setSearchParams]);
+
+  useEffect(() => {
     apiClient.get<Manager[]>("/admin/users", { role: "organizer", pageSize: 100 })
       .then(data => setManagers(data))
       .catch(() => toast.error("Không thể tải danh sách quản lý"));
+  }, []);
+
+  useEffect(() => {
+    const socket = getSocket();
+    const handleRequestUpdated = (payload: {
+      requestId: string;
+      status: string;
+    }) => {
+      const applyUpdate = (request: RequestItem): RequestItem => {
+        if (request.id !== payload.requestId) return request;
+        return {
+          ...request,
+          status: payload.status,
+        };
+      };
+      setRequests((current) => current.map((request) => (
+        applyUpdate(request)
+      )));
+      setViewItem((current) => (
+        current ? applyUpdate(current) : current
+      ));
+    };
+
+    socket.on("consultation_request_updated", handleRequestUpdated);
+    return () => {
+      socket.off("consultation_request_updated", handleRequestUpdated);
+    };
   }, []);
 
   const handleAssign = async () => {

@@ -301,6 +301,7 @@ export const updateContract = async (
     where: { id },
     include: {
       versions: {
+        where: { purpose: "original" },
         take: 1,
         orderBy: { createdAt: "desc" },
         include: { lineItems: lineItemsInclude },
@@ -308,6 +309,18 @@ export const updateContract = async (
     },
   });
   if (!existing) throw createError("NOT_FOUND", "Contract not found", 404);
+
+  const settlementExists = await prisma.contractVersion.findFirst({
+    where: { contractId: id, purpose: "settlement" },
+    select: { id: true },
+  });
+  if (settlementExists) {
+    throw createError(
+      "CONFLICT",
+      "The signed original contract is immutable after settlement is created",
+      409,
+    );
+  }
 
   const hasContentChange =
     input.scopeText !== undefined ||
@@ -335,6 +348,7 @@ export const updateContract = async (
         data: {
           contractId: id,
           versionLabel,
+          purpose: "original",
           scopeText: input.scopeText ?? latestVersion?.scopeText ?? "",
           paymentTerms: input.paymentTerms ?? latestVersion?.paymentTerms ?? "",
           generalTerms: input.generalTerms ?? latestVersion?.generalTerms ?? "",
@@ -809,14 +823,6 @@ export const reviseSettlementVersion = async (
   if (!latestSettlement) {
     throw createError("NOT_FOUND", "Settlement version not found", 404);
   }
-  if (
-    !latestSettlement.lineItems.some((item) =>
-      item.settlementFeedbacks.some((feedback) => feedback.status === "feedback"),
-    )
-  ) {
-    throw createError("CONFLICT", "Settlement has no customer feedback to revise", 409);
-  }
-
   const lineItems = normalizeLineItems(input.lineItems);
   const totalValue = sumLineItems(lineItems);
   ensurePositiveContractTotal(totalValue);
@@ -834,7 +840,7 @@ export const reviseSettlementVersion = async (
         versionLabel,
         purpose: "settlement",
         scopeText: input.scopeText ?? latestSettlement.scopeText,
-        paymentTerms: latestSettlement.paymentTerms,
+        paymentTerms: input.paymentTerms ?? latestSettlement.paymentTerms,
         generalTerms: input.generalTerms ?? latestSettlement.generalTerms,
         createdById: revisedById,
         lineItems: { create: lineItems },

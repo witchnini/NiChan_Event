@@ -20,6 +20,7 @@
     "db:seed": "turbo run db:seed"
   },
   "devDependencies": {
+    "exceljs": "^4.4.0",
     "turbo": "latest"
   }
 }
