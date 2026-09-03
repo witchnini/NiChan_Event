@@ -208,8 +208,8 @@ export const listContracts = async (filters: {
           include: { lineItems: lineItemsInclude },
         },
         settlementFeedbacks: {
-          where: { status: "feedback" },
-          select: { id: true },
+          where: { status: { in: ["agreed", "feedback"] } },
+          select: { id: true, status: true, contractLineItemId: true },
         },
       },
     }),
@@ -515,6 +515,7 @@ export const getSettlementPreview = async (contractId: string) => {
 
   const budgetItems = contract.event.budgets.flatMap((b) => b.items);
   const lineItems = budgetItems.map((item, index) => ({
+    budgetItemId: item.id,
     category: item.category,
     description: item.vendor?.name || null,
     unit: "Trọn gói" as string | null,

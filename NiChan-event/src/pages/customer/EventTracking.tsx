@@ -750,12 +750,21 @@ const EventTracking = () => {
                   in_progress: 4,  // Đặt venue & Nhà cung cấp
                   completed: 7,    // All done
                 };
+                const operationalStep = (() => {
+                  const progressPercent = event?.progressPercent ?? 0;
+                  if (progressPercent >= 90) return 7; // Cho hoan tat quyet toan va thanh toan
+                  if (progressPercent >= 75) return 5; // Tong duyet
+                  if (progressPercent >= 60) return 4; // Dat venue & Nha cung cap
+                  return 3; // Len ke hoach chi tiet
+                })();
                 const currentStepIndex =
                   event?.status === "completed"
                     ? DEFAULT_MILESTONES.length
                     : settlementReviewComplete
                       ? DEFAULT_MILESTONES.length - 1
-                      : EVENT_STATUS_TO_STEP[event?.status ?? ""] ?? -1;
+                      : event?.status === "planning" || event?.status === "in_progress"
+                        ? operationalStep
+                        : EVENT_STATUS_TO_STEP[event?.status ?? ""] ?? -1;
 
                 return DEFAULT_MILESTONES.map((defaultStep, i) => {
                   const apiMilestone = milestones[i];

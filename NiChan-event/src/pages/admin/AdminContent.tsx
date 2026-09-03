@@ -31,6 +31,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { RichTextEditor } from "@/components/features/admin/RichTextEditor";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -112,8 +120,16 @@ type Review = {
   ratingOverall: number;
   comment: string;
   status: string;
-  customerUser?: { displayName: string };
-  event?: { name: string };
+  submittedAt?: string | null;
+  createdAt?: string;
+  approvedAt?: string | null;
+  customerUser?: { id: string; displayName: string };
+  event?: { id: string; name: string };
+  scores?: Array<{
+    id: string;
+    score: number;
+    criteria: { id: string; key: string; label: string; sortOrder?: number };
+  }>;
 };
 
 type UploadResponse = {
@@ -284,6 +300,8 @@ const AdminContent = () => {
   const [editingPortfolioId, setEditingPortfolioId] = useState<string | null>(null);
   const [editingBlogId, setEditingBlogId] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [selectedReview, setSelectedReview] = useState<Review | null>(null);
+  const [reviewActionId, setReviewActionId] = useState<string | null>(null);
   const [coverImagePreviewUrl, setCoverImagePreviewUrl] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -344,6 +362,16 @@ const AdminContent = () => {
       [post.title, post.category, post.excerpt].some((value) => value?.toLowerCase().includes(keyword)),
     );
   }, [activeTab, blogPosts, search]);
+
+  const filteredReviews = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    if (!keyword || activeTab !== "reviews") return reviews;
+    return reviews.filter((review) =>
+      [review.customerUser?.displayName, review.event?.name, review.comment].some((value) =>
+        value?.toLowerCase().includes(keyword),
+      ),
+    );
+  }, [activeTab, reviews, search]);
 
   const pendingReviews = reviews.filter((review) => review.status === "pending").length;
 
@@ -521,22 +549,30 @@ const AdminContent = () => {
   };
 
   const approveReview = async (id: string) => {
+    setReviewActionId(id);
     try {
       await apiClient.patch(`/admin/content/reviews/${id}/approve`);
       toast.success("Đã duyệt đánh giá");
       await load();
+      setSelectedReview(null);
     } catch (error) {
       toast.error(getErrorMessage(error, "Không thể duyệt đánh giá"));
+    } finally {
+      setReviewActionId(null);
     }
   };
 
   const hideReview = async (id: string) => {
+    setReviewActionId(id);
     try {
       await apiClient.patch(`/admin/content/reviews/${id}/hide`);
       toast.success("Đã ẩn đánh giá");
       await load();
+      setSelectedReview(null);
     } catch (error) {
       toast.error(getErrorMessage(error, "Không thể ẩn đánh giá"));
+    } finally {
+      setReviewActionId(null);
     }
   };
 
@@ -1230,9 +1266,9 @@ const AdminContent = () => {
 
         <TabsContent value="reviews" className="m-0 space-y-3">
           {loading && <LoaderBlock />}
-          {!loading && reviews.length === 0 && <EmptyState icon={MessageSquare} message="Chưa có đánh giá nào." />}
+          {!loading && filteredReviews.length === 0 && <EmptyState icon={MessageSquare} message="Không có đánh giá phù hợp." />}
           {!loading &&
-            reviews.map((review, index) => {
+            filteredReviews.map((review, index) => {
               const status = reviewStatusMap[review.status] ?? {
                 label: review.status,
                 color: "bg-muted text-muted-foreground border-border",
@@ -1268,13 +1304,16 @@ const AdminContent = () => {
                       <p className="mt-3 text-sm leading-relaxed text-foreground">{review.comment}</p>
                     </div>
                     <div className="flex flex-shrink-0 gap-1">
+                      <Button variant="ghost" size="icon" title="Xem chi tiết đánh giá" onClick={() => setSelectedReview(review)}>
+                        <Eye size={16} />
+                      </Button>
                       {review.status !== "approved" && (
-                        <Button variant="ghost" size="icon" title="Duyệt đánh giá" onClick={() => void approveReview(review.id)}>
-                          <CheckCircle2 size={16} />
+                        <Button variant="ghost" size="icon" title="Duyệt đánh giá" disabled={reviewActionId === review.id} onClick={() => void approveReview(review.id)}>
+                          {reviewActionId === review.id ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
                         </Button>
                       )}
                       {review.status !== "hidden" && (
-                        <Button variant="ghost" size="icon" title="Ẩn đánh giá" onClick={() => void hideReview(review.id)}>
+                        <Button variant="ghost" size="icon" title="Ẩn đánh giá" disabled={reviewActionId === review.id} onClick={() => void hideReview(review.id)}>
                           <EyeOff size={16} />
                         </Button>
                       )}
@@ -1285,6 +1324,104 @@ const AdminContent = () => {
             })}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={selectedReview !== null} onOpenChange={(open) => { if (!open) setSelectedReview(null); }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          {selectedReview && (() => {
+            const status = reviewStatusMap[selectedReview.status] ?? {
+              label: selectedReview.status,
+              color: "bg-muted text-muted-foreground border-border",
+            };
+            const scores = [...(selectedReview.scores ?? [])].sort(
+              (a, b) => (a.criteria.sortOrder ?? 0) - (b.criteria.sortOrder ?? 0),
+            );
+            const isActing = reviewActionId === selectedReview.id;
+            return (
+              <>
+                <DialogHeader>
+                  <div className="flex flex-wrap items-center gap-2 pr-8">
+                    <DialogTitle className="font-serif">Chi tiết đánh giá</DialogTitle>
+                    <StatusChip label={status.label} color={status.color} />
+                  </div>
+                  <DialogDescription>
+                    Kiểm tra đầy đủ phản hồi của khách hàng trước khi duyệt hoặc ẩn.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-5 py-2">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-md bg-surface-low p-3">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Khách hàng</p>
+                      <p className="mt-1 font-medium text-foreground">{selectedReview.customerUser?.displayName ?? "Khách hàng"}</p>
+                    </div>
+                    <div className="rounded-md bg-surface-low p-3">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Sự kiện</p>
+                      <p className="mt-1 font-medium text-foreground">{selectedReview.event?.name ?? "Không có thông tin"}</p>
+                    </div>
+                    <div className="rounded-md bg-surface-low p-3">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Thời gian gửi</p>
+                      <p className="mt-1 font-medium text-foreground">{formatDateTime(selectedReview.submittedAt ?? selectedReview.createdAt)}</p>
+                    </div>
+                    <div className="rounded-md bg-surface-low p-3">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">Điểm tổng thể</p>
+                      <div className="mt-1 flex items-center gap-2">
+                        <div className="flex items-center gap-0.5">
+                          {Array.from({ length: 5 }, (_, starIndex) => (
+                            <Star key={starIndex} size={16} className={starIndex < selectedReview.ratingOverall ? "fill-amber-500 text-amber-500" : "text-muted-foreground/30"} />
+                          ))}
+                        </div>
+                        <span className="font-semibold text-foreground">{selectedReview.ratingOverall}/5</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {scores.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Điểm theo tiêu chí</p>
+                      <div className="divide-y divide-border rounded-md border border-border">
+                        {scores.map((score) => (
+                          <div key={score.id} className="flex items-center justify-between gap-4 px-3 py-2.5">
+                            <span className="text-sm text-foreground">{score.criteria.label}</span>
+                            <span className="flex items-center gap-1 font-semibold text-foreground">
+                              <Star size={14} className="fill-amber-500 text-amber-500" />
+                              {score.score}/5
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Nội dung phản hồi</p>
+                    <p className="whitespace-pre-wrap rounded-md border border-border bg-surface-lowest p-4 text-sm leading-relaxed text-foreground">
+                      {selectedReview.comment}
+                    </p>
+                  </div>
+                </div>
+
+                <DialogFooter className="gap-2 sm:justify-between">
+                  <Button variant="outline" onClick={() => setSelectedReview(null)} disabled={isActing}>Đóng</Button>
+                  <div className="flex gap-2">
+                    {selectedReview.status !== "hidden" && (
+                      <Button variant="outline" className="gap-2" disabled={isActing} onClick={() => void hideReview(selectedReview.id)}>
+                        <EyeOff size={16} />
+                        Không duyệt / Ẩn
+                      </Button>
+                    )}
+                    {selectedReview.status !== "approved" && (
+                      <Button className="gap-2" disabled={isActing} onClick={() => void approveReview(selectedReview.id)}>
+                        {isActing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                        Duyệt đánh giá
+                      </Button>
+                    )}
+                  </div>
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

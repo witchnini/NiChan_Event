@@ -16,10 +16,11 @@ export const adminProjectOrganizerSchema = z.object({
   organizerUserId: z.string().uuid().nullable(),
 });
 
-export const adminProjectNameSchema = z.object({
+export const adminProjectDetailsSchema = z.object({
   name: z.string().trim().min(1).max(255),
+  eventDate: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
 export type AdminProjectStatusInput = z.infer<typeof adminProjectStatusSchema>;
 export type AdminProjectOrganizerInput = z.infer<typeof adminProjectOrganizerSchema>;
-export type AdminProjectNameInput = z.infer<typeof adminProjectNameSchema>;
+export type AdminProjectDetailsInput = z.infer<typeof adminProjectDetailsSchema>;

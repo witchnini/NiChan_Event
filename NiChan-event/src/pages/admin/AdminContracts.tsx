@@ -35,6 +35,7 @@ import ContractPdfButton from "@/components/features/contracts/ContractPdfButton
 
 type ContractLineItem = {
   id?: string;
+  budgetItemId?: string;
   category: string;
   description?: string | null;
   unit?: string | null;
@@ -136,7 +137,11 @@ type Contract = {
   createdBy?: { id: string; displayName: string } | null;
   versions?: ContractVersion[];
   documents?: ContractDocument[];
-  settlementFeedbacks?: Array<{ id: string }>;
+  settlementFeedbacks?: Array<{
+    id: string;
+    status: "agreed" | "feedback";
+    contractLineItemId: string;
+  }>;
 };
 
 type Project = {
@@ -182,6 +187,7 @@ type ServiceCategoryItem = {
 
 type LineItemForm = {
   sourceLineItemId?: string;
+  sourceBudgetItemId?: string;
   category: string;
   description: string;
   unit: string;
@@ -250,13 +256,31 @@ const statusColors: Record<string, string> = {
 const hasCustomerFeedback = (contract?: Pick<Contract, "rejectionNote"> | null) =>
   Boolean(contract?.rejectionNote?.trim());
 
-const hasSettlementFeedback = (
-  contract?: Pick<Contract, "settlementFeedbacks"> | null,
-) => Boolean(contract?.settlementFeedbacks?.length);
-
 const hasSettlementVersion = (
   contract?: Pick<Contract, "versions"> | null,
 ) => Boolean(contract?.versions?.some((version) => version.purpose === "settlement"));
+
+const latestSettlementFeedbacks = (contract: Contract) => {
+  const settlementVersion = contract.versions?.find((version) => version.purpose === "settlement");
+  const latestLineItemIds = new Set((settlementVersion?.lineItems ?? []).map((item) => item.id));
+  return (contract.settlementFeedbacks ?? []).filter(
+    (feedback) => latestLineItemIds.has(feedback.contractLineItemId),
+  );
+};
+
+const settlementResponseStatus = (contract: Contract) => {
+  const settlementVersion = contract.versions?.find((version) => version.purpose === "settlement");
+  if (!settlementVersion) return null;
+
+  const totalItems = settlementVersion.lineItems?.length ?? 0;
+  const feedbacks = latestSettlementFeedbacks(contract);
+  if (feedbacks.some((feedback) => feedback.status === "feedback")) return "feedback" as const;
+  if (
+    totalItems > 0 &&
+    feedbacks.filter((feedback) => feedback.status === "agreed").length === totalItems
+  ) return "agreed" as const;
+  return "pending" as const;
+};
 
 const latestOriginalVersion = (
   contract?: Pick<Contract, "versions"> | null,
@@ -1057,6 +1081,7 @@ const emptyLineItem = (): LineItemForm => ({
 const settlementLineItemsFromPreview = (preview: SettlementPreview): LineItemForm[] =>
   preview.lineItems.length > 0
     ? preview.lineItems.map((item) => ({
+        sourceBudgetItemId: item.budgetItemId,
         category: item.category ?? "",
         description: String(item.description ?? ""),
         unit: String(item.unit ?? "gói"),
@@ -1795,14 +1820,42 @@ const AdminContracts = () => {
     toast.success(`Đã thêm ${templates.length} hạng mục quyết toán cho ${lineItemContextLabel}`);
   };
 
-  const importBudgetAsSettlement = () => {
-    if (!settlementPreview || settlementPreview.budgetItemCount === 0) {
-      toast.error("Chưa có hạng mục ngân sách thực tế để nhập");
-      return;
-    }
+  const importBudgetAsSettlement = async () => {
+    if (!settlementPreview) return;
 
-    setSettlementLineItems(settlementLineItemsFromPreview(settlementPreview));
-    toast.success("Đã nhập hạng mục quyết toán từ ngân sách thực tế");
+    setSettlementLoading(true);
+    try {
+      const latestPreview = await apiClient.get<SettlementPreview>(
+        `/admin/contracts/${settlementPreview.contractId}/settlement-preview`,
+      );
+      const latestItems = settlementLineItemsFromPreview(latestPreview).filter(
+        (item) => !isEmptyLineItem(item),
+      );
+      const importedBudgetIds = new Set(
+        settlementLineItems.map((item) => item.sourceBudgetItemId).filter(Boolean),
+      );
+      const newItems = latestItems.filter((item) => {
+        if (!item.sourceBudgetItemId || importedBudgetIds.has(item.sourceBudgetItemId)) return false;
+        importedBudgetIds.add(item.sourceBudgetItemId);
+        return true;
+      });
+      const addedCount = newItems.length;
+
+      setSettlementLineItems((currentItems) => appendLineItems(currentItems, newItems));
+      setSettlementPreview(latestPreview);
+
+      if (latestPreview.budgetItemCount === 0) {
+        toast.error("Chưa có hạng mục ngân sách thực tế để nhập");
+      } else if (addedCount === 0) {
+        toast.info("Ngân sách đã được cập nhật; không có hạng mục mới để thêm");
+      } else {
+        toast.success(`Đã thêm ${addedCount} hạng mục ngân sách mới và giữ nguyên nội dung admin đang chỉnh sửa`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không tải được ngân sách mới nhất");
+    } finally {
+      setSettlementLoading(false);
+    }
   };
 
   const handleCreateSettlement = async () => {
@@ -2373,7 +2426,7 @@ const AdminContracts = () => {
                         {contract.status === "cancelled" ? "Có phản hồi KH" : "KH từ chối"}
                       </span>
                     )}
-                    {hasSettlementFeedback(contract) && (
+                    {settlementResponseStatus(contract) === "feedback" && (
                       <button
                         type="button"
                         onClick={() => void openSettlementFeedback(contract)}
@@ -2384,9 +2437,19 @@ const AdminContracts = () => {
                         Feedback nghiệm thu
                       </button>
                     )}
-                    {contract.status === "active" && contract.respondedAt && (
+                    {settlementResponseStatus(contract) === "pending" && (
+                      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-body text-[10px] font-semibold text-amber-600">
+                        Đang đợi phản hồi
+                      </span>
+                    )}
+                    {settlementResponseStatus(contract) === "agreed" && (
                       <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[10px] font-semibold text-secondary">
-                        KH đồng ý
+                        KH đồng ý quyết toán
+                      </span>
+                    )}
+                    {!hasSettlementVersion(contract) && contract.status === "active" && contract.respondedAt && (
+                      <span className="rounded-full bg-secondary/10 px-2 py-0.5 font-body text-[10px] font-semibold text-secondary">
+                        KH đồng ý hợp đồng
                       </span>
                     )}
                   </div>
@@ -2477,7 +2540,7 @@ const AdminContracts = () => {
                         )}
                         {hasSettlementVersion(contract) && (
                           <>
-                            {hasSettlementFeedback(contract) && (
+                            {settlementResponseStatus(contract) === "feedback" && (
                               <DropdownMenuItem onClick={() => void openSettlementFeedback(contract)}>
                                 <Edit2 size={12} className="mr-2" /> Xem feedback & chỉnh sửa
                               </DropdownMenuItem>
@@ -2853,8 +2916,8 @@ const AdminContracts = () => {
                   onApplySuggested: applySuggestedSettlementLineItems,
                   onImportBudget: importBudgetAsSettlement,
                   applySuggestedDisabled: !selectedService && !selectedServiceCategory && lineItemTemplateOptions.length === 0,
-                  importBudgetDisabled: !settlementPreview || settlementPreview.budgetItemCount === 0,
-                  importBudgetLabel: "Nhập từ ngân sách",
+                  importBudgetDisabled: settlementLoading,
+                  importBudgetLabel: settlementLoading ? "Đang cập nhật..." : "Nhập từ ngân sách",
                   helperText: servicesLoading
                     ? "Đang tải dịch vụ..."
                     : `${lineItemTemplateOptions.length} hạng mục mẫu · ${settlementPreview.budgetItemCount > 0 ? `${settlementPreview.budgetItemCount} hạng mục ngân sách thực tế` : "chưa có ngân sách thực tế"}`,

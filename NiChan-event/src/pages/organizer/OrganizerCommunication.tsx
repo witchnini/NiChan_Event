@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Calendar, Download, Eye, FileText, MessageSquare, Paperclip, Search, Send, Trash2, Upload, Users } from "lucide-react";
+import { Calendar, CheckCircle2, Download, Eye, FileText, MessageSquare, Paperclip, Search, Send, Trash2, Upload, Users, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,15 @@ type DocumentItem = {
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleDateString("vi-VN") : "Chưa cập nhật";
 
+const getProjectSortOrder = (status: string) => {
+  if (status === "cancelled") return 2;
+  if (status === "completed") return 1;
+  return 0;
+};
+
+const sortProjectsByStatus = (projects: Project[]) =>
+  [...projects].sort((a, b) => getProjectSortOrder(a.status) - getProjectSortOrder(b.status));
+
 const OrganizerCommunication = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -84,12 +93,12 @@ const OrganizerCommunication = () => {
 
   const filteredProjects = useMemo(() => {
     const keyword = search.trim().toLowerCase();
-    if (!keyword) return projects;
-    return projects.filter((project) =>
+    const matchingProjects = keyword ? projects.filter((project) =>
       [project.name, project.type, project.customerUser.displayName]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(keyword)),
-    );
+    ) : projects;
+    return sortProjectsByStatus(matchingProjects);
   }, [projects, search]);
 
   const loadContext = async (projectId: string) => {
@@ -120,7 +129,7 @@ const OrganizerCommunication = () => {
       try {
         const projectData = await apiClient.get<Project[]>("/organizer/projects");
         setProjects(projectData);
-        const firstId = projectData[0]?.id ?? "";
+        const firstId = sortProjectsByStatus(projectData)[0]?.id ?? "";
         setSelectedProjectId(firstId);
         if (firstId) await loadContext(firstId);
       } catch (error) {
@@ -309,7 +318,15 @@ const OrganizerCommunication = () => {
                 }`}
               >
                 <div className="min-w-0">
-                  <p className="font-body text-sm font-semibold text-foreground truncate">{project.name}</p>
+                  <p className="flex items-center gap-1.5 font-body text-sm font-semibold text-foreground">
+                    <span className="truncate">{project.name}</span>
+                    {project.status === "completed" && (
+                      <CheckCircle2 size={16} className="shrink-0 text-emerald-600" aria-label="Sự kiện đã hoàn thành" />
+                    )}
+                    {project.status === "cancelled" && (
+                      <XCircle size={16} className="shrink-0 text-destructive" aria-label="Sự kiện đã bị hủy" />
+                    )}
+                  </p>
                   <p className="font-body text-xs text-muted-foreground truncate">
                     {project.customerUser.displayName} - {formatDate(project.eventDate)}
                   </p>
@@ -336,8 +353,14 @@ const OrganizerCommunication = () => {
         <div className="bg-surface-lowest rounded-xl p-5 shadow-ambient min-w-0">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-5">
             <div className="min-w-0">
-              <h2 className="font-serif text-headline-md text-foreground truncate">
-                {selectedProject?.name ?? "Chưa chọn dự án"}
+              <h2 className="flex items-center gap-2 font-serif text-headline-md text-foreground">
+                <span className="truncate">{selectedProject?.name ?? "Chưa chọn dự án"}</span>
+                {selectedProject?.status === "completed" && (
+                  <CheckCircle2 size={20} className="shrink-0 text-emerald-600" aria-label="Sự kiện đã hoàn thành" />
+                )}
+                {selectedProject?.status === "cancelled" && (
+                  <XCircle size={20} className="shrink-0 text-destructive" aria-label="Sự kiện đã bị hủy" />
+                )}
               </h2>
               <div className="flex flex-wrap gap-3 mt-2 font-body text-sm text-muted-foreground">
                 <span className="inline-flex items-center gap-1"><Users size={14} /> {selectedProject?.customerUser.displayName ?? "-"}</span>

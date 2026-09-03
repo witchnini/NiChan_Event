@@ -35,7 +35,18 @@ const eventStatusProgressFloor: Readonly<Record<string, number>> = {
 export const getEventProgressPercent = (
   status: string,
   calculatedProgress?: number | null,
-) => Math.max(calculatedProgress ?? 0, eventStatusProgressFloor[status] ?? 0);
+) => {
+  if (status === "completed") return 100;
+
+  const tentativeProgress = Math.max(
+    calculatedProgress ?? 0,
+    eventStatusProgressFloor[status] ?? 0,
+  );
+
+  // Hoan thanh tat ca cong viec van chua dong nghia voi hoan tat thanh du an.
+  // Chi luong nghiem thu quyet toan va thanh toan du moi duoc dat 100%.
+  return Math.min(tentativeProgress, 99);
+};
 
 const addDays = (value: Date, days: number) => {
   const date = new Date(value);

@@ -168,6 +168,15 @@ const formatDate = (value?: string | null) =>
 const toApiDateTime = (value: string) =>
   value ? new Date(`${value}T00:00:00`).toISOString() : undefined;
 
+const toDateInputValue = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 const parseEventNameFromNote = (note?: string | null): string | null => {
   if (!note) return null;
 
@@ -225,6 +234,7 @@ const AdminProjects = () => {
   const [targetStatus, setTargetStatus] = useState("todo");
   const [form, setForm] = useState(emptyForm);
   const [projectNameForm, setProjectNameForm] = useState("");
+  const [projectDateForm, setProjectDateForm] = useState("");
   const [loading, setLoading] = useState(true);
   const projectContextRequestRef = useRef(0);
 
@@ -326,6 +336,7 @@ const AdminProjects = () => {
   const openProjectNameEdit = (project: Project) => {
     setEditingProject(project);
     setProjectNameForm(getProjectDisplayName(project));
+    setProjectDateForm(toDateInputValue(project.eventDate));
     setNameDialogOpen(true);
   };
 
@@ -339,8 +350,11 @@ const AdminProjects = () => {
     }
 
     try {
-      await apiClient.patch(`/admin/projects/${editingProject.id}/name`, { name: nextName });
-      toast.success("Đã cập nhật tên dự án");
+      await apiClient.patch(`/admin/projects/${editingProject.id}/details`, {
+        name: nextName,
+        eventDate: toApiDateTime(projectDateForm) ?? null,
+      });
+      toast.success("Đã cập nhật thông tin dự án");
       setNameDialogOpen(false);
       setEditingProject(null);
       await refresh();
@@ -890,9 +904,10 @@ const AdminProjects = () => {
       <Dialog open={nameDialogOpen} onOpenChange={setNameDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-serif">Sửa tên dự án</DialogTitle>
+            <DialogTitle className="font-serif">Chỉnh sửa thông tin dự án</DialogTitle>
           </DialogHeader>
-          <div>
+          <div className="space-y-4">
+            <div>
             <label className="font-body text-sm text-foreground mb-1 block">Tên dự án</label>
             <Input
               value={projectNameForm}
@@ -900,6 +915,16 @@ const AdminProjects = () => {
               className="rounded-xl border-none bg-surface-low"
               autoFocus
             />
+            </div>
+            <div>
+              <label className="font-body text-sm text-foreground mb-1 block">Ngày diễn ra</label>
+              <Input
+                type="date"
+                value={projectDateForm}
+                onChange={(event) => setProjectDateForm(event.target.value)}
+                className="rounded-xl border-none bg-surface-low"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNameDialogOpen(false)}>Hủy</Button>

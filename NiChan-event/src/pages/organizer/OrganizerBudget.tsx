@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Wallet, TrendingUp, TrendingDown, AlertCircle, Plus, Edit2, Trash2 } from "lucide-react";
+import { Wallet, TrendingUp, TrendingDown, AlertCircle, Plus, Edit2, Trash2, CheckCircle2, XCircle } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { toast } from "sonner";
 type Project = {
   id: string;
   name: string;
+  status: string;
   type?: string | null;
   consultationRequest?: { eventType?: string | null } | null;
 };
@@ -99,6 +100,11 @@ const parseAmount = (value: string) => Number(value || 0);
 const formatCurrency = (value: string | number) =>
   `${toAmount(value).toLocaleString("vi-VN")} đ`;
 const normalizeCategoryName = (value: string) => value.trim().toLowerCase();
+const getProjectSortOrder = (status: string) => {
+  if (status === "cancelled") return 2;
+  if (status === "completed") return 1;
+  return 0;
+};
 
 const OrganizerBudget = () => {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -164,6 +170,11 @@ const OrganizerBudget = () => {
   const visibleItems = useMemo(
     () => (current?.items ?? []).filter(item => statusFilter === "all" || item.status === statusFilter),
     [current, statusFilter],
+  );
+
+  const sortedProjects = useMemo(
+    () => [...projects].sort((a, b) => getProjectSortOrder(a.status) - getProjectSortOrder(b.status)),
+    [projects],
   );
 
   const comparisonData = useMemo(() => visibleItems.map(item => ({
@@ -272,10 +283,18 @@ const OrganizerBudget = () => {
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        {projects.map((project) => (
+        {sortedProjects.map((project) => (
           <button key={project.id} onClick={() => setActiveProjectId(project.id)}
             className={`px-4 py-2 rounded-xl font-body text-sm transition-all ${activeProjectId === project.id ? "bg-secondary text-secondary-foreground font-semibold" : "bg-surface-lowest text-muted-foreground hover:text-foreground"}`}>
-            {project.name}
+            <span className="inline-flex items-center gap-1.5">
+              {project.name}
+              {project.status === "completed" && (
+                <CheckCircle2 size={16} className="text-emerald-600" aria-label="Sự kiện đã hoàn thành" />
+              )}
+              {project.status === "cancelled" && (
+                <XCircle size={16} className="text-destructive" aria-label="Sự kiện đã bị hủy" />
+              )}
+            </span>
           </button>
         ))}
       </div>
@@ -286,7 +305,15 @@ const OrganizerBudget = () => {
         ) : (
           <>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-serif text-headline-md text-foreground">{current.project.name}</h3>
+              <h3 className="inline-flex items-center gap-2 font-serif text-headline-md text-foreground">
+                {current.project.name}
+                {current.project.status === "completed" && (
+                  <CheckCircle2 size={20} className="text-emerald-600" aria-label="Sự kiện đã hoàn thành" />
+                )}
+                {current.project.status === "cancelled" && (
+                  <XCircle size={20} className="text-destructive" aria-label="Sự kiện đã bị hủy" />
+                )}
+              </h3>
               <span className={`font-serif font-bold text-lg ${percent > 80 ? "text-destructive" : "text-secondary"}`}>{percent}% đã chi</span>
             </div>
             <Progress value={progressValue} className="h-3 mb-4" />

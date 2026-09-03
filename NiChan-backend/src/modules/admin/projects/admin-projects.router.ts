@@ -16,7 +16,7 @@ import {
   updateTaskStatus,
 } from "../../organizer/projects/organizer-projects.service";
 import {
-  adminProjectNameSchema,
+  adminProjectDetailsSchema,
   adminProjectOrganizerSchema,
   adminProjectStatusSchema,
 } from "./admin-projects.schema";
@@ -24,7 +24,7 @@ import {
   getAdminKanban,
   getAdminProjectById,
   listAdminProjects,
-  updateAdminProjectName,
+  updateAdminProjectDetails,
   updateAdminProjectOrganizer,
   updateAdminProjectStatus,
 } from "./admin-projects.service";
@@ -108,12 +108,22 @@ adminProjectsRouter.patch(
   },
 );
 
-// PATCH /api/admin/projects/:projectId/name
+// PATCH /api/admin/projects/:projectId/details
+adminProjectsRouter.patch(
+  "/:projectId/details",
+  validate(adminProjectDetailsSchema),
+  async (req: Request, res: Response) => {
+    const data = await updateAdminProjectDetails(p(req, "projectId"), req.user!.userId, req.body);
+    sendSuccess(res, { data });
+  },
+);
+
+// Kept for clients that only update the project name.
 adminProjectsRouter.patch(
   "/:projectId/name",
-  validate(adminProjectNameSchema),
+  validate(adminProjectDetailsSchema),
   async (req: Request, res: Response) => {
-    const data = await updateAdminProjectName(p(req, "projectId"), req.user!.userId, req.body);
+    const data = await updateAdminProjectDetails(p(req, "projectId"), req.user!.userId, req.body);
     sendSuccess(res, { data });
   },
 );

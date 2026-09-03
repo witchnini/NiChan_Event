@@ -938,33 +938,38 @@ export const respondToContract = async (
       },
     });
 
-    let notification = null;
-    if (contract.createdBy?.id) {
-      notification = await tx.notification.create({
-        data: {
-          userId: contract.createdBy.id,
-          scope: "admin",
-          type: "contract_rejected",
-          title: "Khách hàng từ chối hợp đồng",
-          message: `${customerName} đã từ chối hợp đồng ${contract.contractCode} (${eventName}). Lý do: ${rejectionNote?.trim() || "Không nêu lý do"}.`,
-          entityType: "contract",
-          entityId: contractId,
-        },
-      });
-    }
+    const admins = await tx.user.findMany({
+      where: { role: "admin", status: "active", deletedAt: null },
+      select: { id: true },
+    });
+    const notifications = await Promise.all(
+      admins.map((admin) =>
+        tx.notification.create({
+          data: {
+            userId: admin.id,
+            scope: "admin",
+            type: "contract_rejected",
+            title: "Khách hàng từ chối hợp đồng",
+            message: `${customerName} đã từ chối hợp đồng ${contract.contractCode} (${eventName}). Lý do: ${rejectionNote?.trim() || "Không nêu lý do"}.`,
+            entityType: "contract",
+            entityId: contractId,
+          },
+        }),
+      ),
+    );
 
-    return { updated, notification };
+    return { updated, notifications };
   });
 
-  if (result.notification && contract.createdBy?.id) {
-    emitNotification(contract.createdBy.id, {
-      id: result.notification.id,
-      type: result.notification.type,
-      title: result.notification.title,
-      message: result.notification.message,
-      entityType: result.notification.entityType,
-      entityId: result.notification.entityId,
-      createdAt: result.notification.createdAt,
+  for (const notification of result.notifications) {
+    emitNotification(notification.userId, {
+      id: notification.id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      entityType: notification.entityType,
+      entityId: notification.entityId,
+      createdAt: notification.createdAt,
     });
   }
 
@@ -1352,6 +1357,15 @@ export const submitSettlementFeedback = async (
 
   // Upsert all feedbacks in a transaction
   const result = await prisma.$transaction(async (tx: Tx) => {
+    const existingFeedbackCount = await tx.settlementFeedback.count({
+      where: {
+        contractId,
+        customerId: customerUserId,
+        contractLineItemId: { in: parsed.items.map((item) => item.lineItemId) },
+      },
+    });
+    const isFeedbackUpdate = existingFeedbackCount > 0;
+
     const feedbacks = await Promise.all(
       parsed.items.map((item) =>
         tx.settlementFeedback.upsert({
@@ -1379,28 +1393,34 @@ export const submitSettlementFeedback = async (
     // Notify admin/organizer about the feedback
     const feedbackCount = parsed.items.filter((i) => i.status === "feedback").length;
     const agreedCount = parsed.items.filter((i) => i.status === "agreed").length;
+    const actionText = isFeedbackUpdate ? "đã cập nhật nghiệm thu" : "đã nghiệm thu";
     const message = feedbackCount > 0
-      ? `Khách hàng đã nghiệm thu ${contract.contractCode}: ${agreedCount} đồng ý, ${feedbackCount} cần xem lại.`
-      : `Khách hàng đã đồng ý tất cả ${agreedCount} hạng mục trong ${contract.contractCode}.`;
+      ? `Khách hàng ${actionText} ${contract.contractCode}: ${agreedCount} đồng ý, ${feedbackCount} cần xem lại.`
+      : `Khách hàng ${actionText} ${contract.contractCode} và đồng ý tất cả ${agreedCount} hạng mục.`;
 
-    const notifyUserIds = new Set<string>();
-    if (contract.event?.organizerUserId) notifyUserIds.add(contract.event.organizerUserId);
+    const recipients: Array<{ userId: string; scope: "admin" | "organizer" }> = [];
+    if (contract.event?.organizerUserId) {
+      recipients.push({ userId: contract.event.organizerUserId, scope: "organizer" });
+    }
 
-    // Also notify admins
     const admins = await tx.user.findMany({
-      where: { role: "admin", status: "active" },
+      where: { role: "admin", status: "active", deletedAt: null },
       select: { id: true },
     });
-    for (const admin of admins) notifyUserIds.add(admin.id);
+    for (const admin of admins) {
+      if (!recipients.some((recipient) => recipient.userId === admin.id)) {
+        recipients.push({ userId: admin.id, scope: "admin" });
+      }
+    }
 
     const notifications = await Promise.all(
-      [...notifyUserIds].map((userId) =>
+      recipients.map((recipient) =>
         tx.notification.create({
           data: {
-            userId,
-            scope: "admin",
+            userId: recipient.userId,
+            scope: recipient.scope,
             type: "settlement_feedback",
-            title: "Nghiệm thu hạng mục",
+            title: isFeedbackUpdate ? "Khách hàng cập nhật nghiệm thu" : "Nghiệm thu hạng mục",
             message,
             entityType: "contract",
             entityId: contractId,

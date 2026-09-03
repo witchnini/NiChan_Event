@@ -10,7 +10,7 @@ import {
   notifyCustomerForEvent,
 } from "../../shared/event-lifecycle.service";
 import type {
-  AdminProjectNameInput,
+  AdminProjectDetailsInput,
   AdminProjectOrganizerInput,
   AdminProjectStatusInput,
 } from "./admin-projects.schema";
@@ -379,24 +379,31 @@ export const updateAdminProjectStatus = async (
   return result.updatedEvent;
 };
 
-export const updateAdminProjectName = async (
+export const updateAdminProjectDetails = async (
   projectId: string,
   adminUserId: string,
-  input: AdminProjectNameInput,
+  input: AdminProjectDetailsInput,
 ) => {
   const project = await prisma.event.findUnique({
     where: { id: projectId },
-    select: { id: true, name: true, status: true },
+    select: { id: true, name: true, eventDate: true, status: true },
   });
   if (!project) throw createError("NOT_FOUND", "Project not found", 404);
   if (project.status === "cancelled")
     throw createError("CONFLICT", "A cancelled project cannot be modified", 409);
-  if (project.name === input.name) return project;
+  const nextEventDate = input.eventDate === undefined
+    ? project.eventDate
+    : input.eventDate
+      ? new Date(input.eventDate)
+      : null;
+  const nameChanged = project.name !== input.name;
+  const dateChanged = project.eventDate?.getTime() !== nextEventDate?.getTime();
+  if (!nameChanged && !dateChanged) return project;
 
   const updatedProject = await prisma.$transaction(async (tx) => {
     const updatedProject = await tx.event.update({
       where: { id: projectId },
-      data: { name: input.name },
+      data: { name: input.name, eventDate: nextEventDate },
       include: {
         customerUser: { select: { id: true, displayName: true, email: true, phone: true } },
         organizerUser: { select: { id: true, displayName: true, email: true, avatarUrl: true } },
@@ -419,7 +426,11 @@ export const updateAdminProjectName = async (
         eventId: projectId,
         actorUserId: adminUserId,
         iconName: "edit",
-        message: `Admin đã đổi tên dự án từ ${project.name} thành ${input.name}.`,
+        message: nameChanged && dateChanged
+          ? "Admin đã cập nhật tên và ngày diễn ra dự án."
+          : nameChanged
+            ? `Admin đã đổi tên dự án từ ${project.name} thành ${input.name}.`
+            : "Admin đã cập nhật ngày diễn ra dự án.",
       },
     });
 
@@ -429,7 +440,11 @@ export const updateAdminProjectName = async (
   await notifyCustomerForEvent(projectId, {
     type: "event",
     title: "Thông tin sự kiện đã được cập nhật",
-    message: `Tên sự kiện đã được đổi từ "${project.name}" thành "${input.name}".`,
+    message: nameChanged && dateChanged
+      ? `Tên và ngày diễn ra sự kiện "${input.name}" đã được cập nhật.`
+      : nameChanged
+        ? `Tên sự kiện đã được đổi từ "${project.name}" thành "${input.name}".`
+        : `Ngày diễn ra sự kiện "${input.name}" đã được cập nhật.`,
   });
   return updatedProject;
 };
